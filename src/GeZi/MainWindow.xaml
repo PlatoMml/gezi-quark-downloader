@@ -1196,6 +1196,19 @@
                                                       StrokeLineJoin="Round"/>
                                             </MenuItem.Icon>
                                         </MenuItem>
+                                        <!-- 🚨 2026-11-14 新增：失败任务的「重试下载」。
+                                             只在选中里有 Failed 任务时可见（见 OnTaskContextMenuOpened）。
+                                             走的是与「未完成」入口完全相同的续传链路，从断点接着下。 -->
+                                        <MenuItem x:Name="TaskRetryItem" Header="重试下载" Click="OnTaskRetry"
+                                                  Foreground="{DynamicResource TextPrimaryBrush}">
+                                            <MenuItem.Icon>
+                                                <Path Data="{StaticResource IconRefresh}" Stretch="Uniform"
+                                                      Width="14" Height="14"
+                                                      Stroke="{DynamicResource TextPrimaryBrush}" StrokeThickness="1.7"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"/>
+                                            </MenuItem.Icon>
+                                        </MenuItem>
                                         <MenuItem Header="删除并移除" Click="OnTaskDeleteLocal"
                                                   Foreground="{DynamicResource DangerBrush}">
                                             <MenuItem.Icon>

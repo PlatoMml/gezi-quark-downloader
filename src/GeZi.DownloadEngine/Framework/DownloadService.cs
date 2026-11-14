@@ -462,11 +462,33 @@ public class DownloadService : AbstractDownloadService
                         Md5Untrusted.TryAdd(md5CacheKey, 1);
                 }
 
-                verify = VerifyOutcome.Warn(check == CrossCheckMatched
-                    ? "内容已按服务器返回完整下载（抽样逐字节复核一致）；"
-                      + "网盘接口给的哈希与实际内容不符，属元数据问题，文件可用"
-                    : "已按服务器声明的长度下完（抽样复核未能取到远端样本，无法逐字节比对）；"
-                      + "网盘接口给的哈希与实际内容不符，按元数据问题处理，文件可用");
+                // 🚨🚨 2026-11-14 改：把三种结论的文案彻底分开，不再一律写「文件可用」。
+                //
+                // 原来 CrossCheckUnverified（一段样本都没取到）也写「按元数据问题处理，文件可用」——
+                // 可我们**根本没验证过内容**，只是长度对。用户日志里反复出现
+                // 「抽样 16 段 x 256 KB，一致 0 段…」紧跟着「文件可用」，这是拿「无法验证」
+                // 冒充「验证通过」，属于对用户撒谎。
+                // 现在：能证明的才说「可用」，证不了的就明说「未校验」。
+                if (check == CrossCheckMatched)
+                {
+                    verify = VerifyOutcome.Warn(
+                        "内容已按服务器返回完整下载（抽样逐字节复核一致）；"
+                        + "网盘接口给的哈希与实际内容不符，属元数据问题，文件可用");
+                }
+                else if (check == CrossCheckDamaged)
+                {
+                    // 这条分支上面已经 throw 了，这里只是兜底，保证不会误写「可用」
+                    verify = VerifyOutcome.Fail("抽样复核", "文件内容与服务器不一致（抽样逐字节复核发现差异）。请重新下载。");
+                }
+                else
+                {
+                    // 未校验：长度对得上，但我们没有证据说明内容正确。
+                    // 用 Skip 语义（Skipped=true）而不是 Warn，让上层和界面能把它单独标出来，
+                    // 不再显示成「已校验通过」。
+                    verify = VerifyOutcome.Skip(
+                        "未完成内容校验（抽样复核没能取到远端样本，可能是直链已过期或网络受限）；"
+                        + "文件已按服务器声明的长度下完，但内容尚未逐字节确认，建议打开检查后再决定是否保留");
+                }
             }
 
             if (!verify.Ok)
@@ -673,7 +695,13 @@ public class DownloadService : AbstractDownloadService
         // 正常几秒就能抓完，这个预算只是防止极端情况无限拖下去。
         // 注意：.NET Framework 的 ConnectStream.ReadAsync 不响应 CancellationToken，
         // 所以预算只能中断建连，中断不了正在传输的读 —— 真正保证「不卡」的是并行分块。
-        const int MoovBudgetMs = 8000;
+        //
+        // 🚨🚨 2026-11-14 修 issue #19：原来是 8000 ms，对「moov 在文件尾且体积大」的文件
+        // （用户实测 6,999,329 字节的 moov 在偏移 7,410,712,443）根本不够 —— 而每块都要
+        // 新建 TLS 连接（无连接池），7 MB / 64 块每块都要握手，8 秒必然超时。
+        // 超时后原本是**永久放弃**，用户这辈子都只能等下完才能播。
+        // 现在：预算抬到 30 秒，且失败/超时后再起一次后台重试（不占主下载线程）。
+        const int MoovBudgetMs = 30000;
         using (var budget = CancellationTokenSource.CreateLinkedTokenSource(cancel))
         {
             budget.CancelAfter(MoovBudgetMs);
@@ -685,14 +713,51 @@ public class DownloadService : AbstractDownloadService
             {
                 if (cancel.IsCancellationRequested) throw;   // 用户取消，照常往上抛
                 _logger?.LogInfo("moov 优先：超过 " + (MoovBudgetMs / 1000)
-                    + " 秒预算，放弃（不影响下载，只是暂时不能边下边看）");
+                    + " 秒预算，转后台重试一次（不影响下载，只是晚一点才能边下边看）");
+                ScheduleMoovRetry(transport, first, cancel);
             }
             catch (Exception ex)
             {
                 // 尽力而为：索引没抓到不影响正常下载，只是用户得多等一会儿才能播
-                _logger?.LogWarning("moov 优先失败（不影响下载）：" + ex.Message);
+                _logger?.LogWarning("moov 优先失败（不影响下载），转后台重试一次：" + ex.Message);
+                ScheduleMoovRetry(transport, first, cancel);
             }
         }
+    }
+
+    /// <summary>
+    /// moov 优先失败后的后台重试（2026-11-14 修 issue #19）。
+    /// <para>
+    /// 为什么要重试：失败多半是「连不上/太慢/被 CDN 掐」这类瞬时问题，而 moov 抓到之前
+    /// 半截 MP4 一律播不了。第一次失败时给更长的预算（60 秒）在后台再试一遍，
+    /// 成功就悄悄写好索引，用户下到一半就能播；再失败就算了，只留一条日志。
+    /// </para>
+    /// <para>不占主下载线程：扔到线程池，任何异常都只记日志，绝不影响下载。</para>
+    /// </summary>
+    private void ScheduleMoovRetry(IChunkTransport transport, Request first, CancellationToken cancel)
+    {
+        if (transport == null || first == null || cancel.IsCancellationRequested) return;
+        const int RetryBudgetMs = 60000;
+        Task.Run(async () =>
+        {
+            try
+            {
+                using (var budget = CancellationTokenSource.CreateLinkedTokenSource(cancel))
+                {
+                    budget.CancelAfter(RetryBudgetMs);
+                    await FetchMoovCoreAsync(transport, first, budget.Token).ConfigureAwait(false);
+                    _logger?.LogInfo("moov 优先：后台重试成功，索引表已补齐（现在就能边下边看）");
+                }
+            }
+            catch (OperationCanceledException)
+            {
+                // 用户取消或再次超时：静默放弃，不刷屏
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogDebug("moov 优先：后台重试仍失败（不影响下载）：" + ex.Message);
+            }
+        }, cancel);
     }
 
     /// <summary>「moov 优先」的主体：探测 mdat 结尾 → 定位 moov → 抓取 → 写入正确偏移。</summary>
@@ -883,16 +948,19 @@ public class DownloadService : AbstractDownloadService
         // 🚨 2026-11-08：段数从 16 降到 4。
         //   16 段 × 256KB = 4MB，但夸克直链单连接 ~51KB/s，16 段并发也要 20 秒才勉强出结果，
         //   实测「一致 0 段，不一致 0 段，未取到 16 段」—— 纯白跑，还让界面挂「复核中」17 秒。
-        //   4 段横跨文件头/中/尾，采样点更分散、代表性不降反升，且 4 段并发约 5 秒就能回来。
-        //   真损坏时任意一段不一致即被抓到（损坏不是「正好避开 4 个采样点」能躲掉的）。
-        //   配合 md5 不可信缓存（见 Md5UntrustedCache），绝大多数夸克文件连这 4 段都不用跑。
+        //   配合 md5 不可信缓存（见 Md5UntrustedCache），绝大多数夸克文件连这几段都不用跑。
+        //
+        // 🚨🚨 2026-11-14 改：采样点从「4 段均匀分布」改成「头 + 尾 + 中间两段」。
+        //
+        // 为什么要改：均匀 4 段在 22GB 上的覆盖率是 1MB/22GB = 0.0045%，
+        // 而且**头尾完全没有保护** —— 头错了文件格式直接打不开（ftyp / 压缩包头），
+        // 尾错了 MP4 的 moov、RAR/ZIP 的中心目录全丢（表现为「能解压但最后报错」）。
+        // 中间错了反而容易被用户当场发现。
+        // 现在固定采样：偏移 0 起 1MB、末尾 1MB、以及 1/3 与 2/3 处各 512KB，
+        // 总采样 3MB（覆盖率 0.0136%），但头尾是**确定性覆盖**。
         const int Samples = 4;
-
-        // 🚨 样本必须小。夸克分享直链单连接实测 ~51 KB/s：
-        //   1 MB 一段要 20 秒，16 段并发也正好撞上预算边缘 —— 实测 16 段全部超时，
-        //   日志出现「一致 0 段，不一致 0 段，未取到 16 段」。
-        //   256 KB 一段约 5 秒，1 MB 总量足以判定「是元数据问题还是真损坏」。
-        const int SampleBytes = 256 * 1024;
+        const int HeadTailBytes = 1024 * 1024;
+        const int MidBytes = 512 * 1024;
 
         const int TotalBudgetMs = 12000;
 
@@ -910,7 +978,43 @@ public class DownloadService : AbstractDownloadService
             return CrossCheckUnverified;
         }
 
-        long span = Math.Max(1L, total / Samples);
+        // 计算四个采样区间（头 / 三分点 / 三分之二点 / 尾）。
+        // 文件很小时按比例收缩，避免区间互相重叠或越界。
+        long[] starts = new long[Samples];
+        long[] ends = new long[Samples];
+        {
+            long headLen = Math.Min(HeadTailBytes, Math.Max(1L, total / 4));
+            long tailLen = headLen;
+            long midLen = Math.Min(MidBytes, Math.Max(1L, total / 8));
+
+            starts[0] = 0;
+            ends[0] = Math.Min(total - 1, headLen - 1);
+
+            long t1 = total / 3;
+            starts[1] = Math.Max(0, t1 - midLen / 2);
+            ends[1] = Math.Min(total - 1, starts[1] + midLen - 1);
+
+            long t2 = (total * 2) / 3;
+            starts[2] = Math.Max(0, t2 - midLen / 2);
+            ends[2] = Math.Min(total - 1, starts[2] + midLen - 1);
+
+            starts[3] = Math.Max(0, total - tailLen);
+            ends[3] = total - 1;
+
+            // 去重：文件太小时相邻区间可能重叠，重叠的跳过（记 3=没取到 之外单独标记不参与统计）
+            for (int i = 1; i < Samples; i++)
+            {
+                if (starts[i] <= ends[i - 1])
+                {
+                    starts[i] = ends[i - 1] + 1;
+                    if (starts[i] >= total)
+                    {
+                        starts[i] = -1;   // 标记为「无区间」
+                        ends[i] = -1;
+                    }
+                }
+            }
+        }
 
         // 0=没跑 1=一致 2=不一致 3=没取到
         int[] results = new int[Samples];
@@ -923,14 +1027,14 @@ public class DownloadService : AbstractDownloadService
             for (int i = 0; i < Samples; i++)
             {
                 int idx = i;
-                long start = (long)idx * span;
-                if (start >= total)
+                if (starts[idx] < 0 || starts[idx] >= total)
                 {
                     results[idx] = 3;
                     tasks[idx] = Task.FromResult(0);
                     continue;
                 }
-                long end = Math.Min(total - 1, start + SampleBytes - 1);
+                long start = starts[idx];
+                long end = ends[idx];
                 tasks[idx] = Task.Run(() => CompareSampleAsync(
                     transport, template, path, start, end, results, reasons, idx, budget.Token));
             }
@@ -961,7 +1065,15 @@ public class DownloadService : AbstractDownloadService
             }
         }
 
-        _logger?.LogInfo("哈希复核：抽样 " + Samples + " 段 x " + (SampleBytes / 1024) + " KB，一致 "
+        // 日志按真实采样区间报告（头/尾 1MB + 中间 512KB，不再统一写 256KB）
+        long sampledBytes = 0;
+        for (int i = 0; i < Samples; i++)
+        {
+            if (starts[i] >= 0 && ends[i] >= starts[i]) sampledBytes += ends[i] - starts[i] + 1;
+        }
+
+        _logger?.LogInfo("哈希复核：抽样 " + Samples + " 段（头/尾各 1MB + 中间两段各 512KB，共 "
+            + (sampledBytes / 1024) + " KB），一致 "
             + same + " 段，不一致 " + diff + " 段，未取到 " + missed + " 段"
             + (string.IsNullOrEmpty(firstReason) ? "" : "（首个失败原因：" + firstReason + "）"));
 

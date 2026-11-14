@@ -142,6 +142,8 @@ namespace GeZi.SelfTest
     Run("bandwidth_smoothing", TestBandwidthSmoothing);
     Run("log_redactor", TestLogRedactor);
         Run("pending_canresume", TestPendingCanResume);
+        Run("retry_policy", TestRetryPolicy);
+        Run("verify_multi_algorithm", TestVerifyMultiAlgorithm);
             }
             catch (Exception ex)
             {
@@ -1751,6 +1753,167 @@ namespace GeZi.SelfTest
             Check("check.aliyun_ok", ali.Can, "阿里分享有 fid 即可续传");
             var xl = ResumePolicy.Check(@"C:\x\xl.zip", "f8", true, null, null, null, 3);
             Check("check.xunlei_ok", xl.Can, "迅雷分享有 fid 即可续传");
+        }
+
+
+        /// <summary>
+        /// 🚨 2026-11-14：失败重试判据（用户硬要求「任何文件都不可以轻易说失败」）。
+        /// <para>
+        /// 这三条判据是整个「失败永不判死」链条的第一道闸：
+        /// 网络断了必须重试、磁盘满了绝不能重试、校验不符绝不能重试。
+        /// </para>
+        /// </summary>
+        private static void TestRetryPolicy()
+        {
+            // ============ 传输层断开 vs 磁盘类错误 ============
+            // 这是真机 issue #18 的原始文案：ConnectStream 读响应体失败抛的 IOException
+            var connClosed = new System.IO.IOException(
+                "无法从传输连接中读取数据: 连接已关闭。");
+            Check("retry.connection_closed_is_transport",
+                GeZi.Core.Support.RetryPolicy.IsTransportIo(connClosed),
+                "「无法从传输连接中读取数据: 连接已关闭」必须判为网络断开（不能当成写盘失败）");
+
+            var forcedClosed = new System.IO.IOException(
+                "远程主机强迫关闭了一个现有的连接。");
+            Check("retry.forced_close_is_transport",
+                GeZi.Core.Support.RetryPolicy.IsTransportIo(forcedClosed),
+                "「远程主机强迫关闭」必须判为网络断开");
+
+            // 内层带 SocketException 的，无论外层是什么都要认得出来
+            var wrapped = new System.IO.IOException("读取失败",
+                new System.Net.Sockets.SocketException(10054));
+            Check("retry.socket_inner_is_transport",
+                GeZi.Core.Support.RetryPolicy.IsTransportIo(wrapped),
+                "内层 SocketException 必须判为网络断开");
+
+            // 🚨 关键反向断言：磁盘类异常绝不能判成网络，否则会无限重试
+            Check("retry.disk_full_not_transport",
+                !GeZi.Core.Support.RetryPolicy.IsTransportIo(
+                    new System.IO.IOException("磁盘空间不足。")),
+                "磁盘空间不足必须判为磁盘问题（不能当成网络重试）");
+            Check("retry.access_denied_not_transport",
+                !GeZi.Core.Support.RetryPolicy.IsTransportIo(
+                    new UnauthorizedAccessException("对路径的访问被拒绝。")),
+                "拒绝访问必须判为权限问题");
+            Check("retry.null_not_transport",
+                !GeZi.Core.Support.RetryPolicy.IsTransportIo(null),
+                "null 不能判成网络异常");
+
+            // ============ 值不值得重试 ============
+            Check("retry.empty_message_retryable",
+                GeZi.Core.Support.RetryPolicy.IsRetryableFailure(""),
+                "没给原因时按可重试处理（保守）");
+            Check("retry.connection_message_retryable",
+                GeZi.Core.Support.RetryPolicy.IsRetryableFailure(
+                    "下载中断：网络连接被服务端或中间设备断开（…）。已下载部分会保留，可直接重试续传。"),
+                "网络断开必须可重试");
+            Check("retry.timeout_message_retryable",
+                GeZi.Core.Support.RetryPolicy.IsRetryableFailure("等待响应超时，请稍后重试。"),
+                "超时必须可重试");
+
+            // 🚨 这些重试纯属浪费用户时间
+            Check("retry.hash_mismatch_not_retryable",
+                !GeZi.Core.Support.RetryPolicy.IsRetryableFailure(
+                    "内容校验失败：MD5 不一致（期望 a，实际 b）"),
+                "内容不一致绝不能自动重试");
+            Check("retry.disk_full_not_retryable",
+                !GeZi.Core.Support.RetryPolicy.IsRetryableFailure("写盘失败：磁盘空间不足。"),
+                "磁盘空间不足绝不能自动重试");
+            Check("retry.access_denied_not_retryable",
+                !GeZi.Core.Support.RetryPolicy.IsRetryableFailure("写盘失败：拒绝访问。"),
+                "拒绝访问绝不能自动重试");
+            Check("retry.not_exists_not_retryable",
+                !GeZi.Core.Support.RetryPolicy.IsRetryableFailure("该文件在网盘上已不存在。"),
+                "文件已被删绝不能自动重试");
+            Check("retry.cancelled_not_retryable",
+                !GeZi.Core.Support.RetryPolicy.IsRetryableFailure("已取消一个任务。"),
+                "主动取消绝不能自动重试");
+        }
+
+
+        /// <summary>
+        /// 🚨 2026-11-14：多算法全试。
+        /// <para>
+        /// 夸克同时返回 md5/sha1/sha256，而它的 md5 常错（2026-10-24 全量比对坐实）。
+        /// 原来只试第一个非空算法 ⇒ 拿错误的 md5 比对 ⇒ 每个夸克文件都报「不一致」。
+        /// 现在必须「任一算法对上就算通过」。
+        /// </para>
+        /// </summary>
+        private static void TestVerifyMultiAlgorithm()
+        {
+            // 造一个临时文件，内容是确定的字节序列
+            // ⚠️ 用「自检程序自己所在目录」而不是 Path.GetTempPath()：
+            //    某些环境下（沙盒/受限账户）AppData\Local\Temp 会被拒绝访问，
+            //    自检不该因为挑临时目录而失败。
+            string path = System.IO.Path.Combine(
+                AppDomain.CurrentDomain.BaseDirectory,
+                "gezi_self_verify_" + Guid.NewGuid().ToString("N") + ".bin");
+            try
+            {
+                byte[] data = new byte[4096];
+                for (int i = 0; i < data.Length; i++) data[i] = (byte)(i % 251);
+                System.IO.File.WriteAllBytes(path, data);
+
+                string realMd5, realSha1, realSha256;
+                using (var md5 = System.Security.Cryptography.MD5.Create())
+                    realMd5 = BitConverter.ToString(md5.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+                using (var sha1 = System.Security.Cryptography.SHA1.Create())
+                    realSha1 = BitConverter.ToString(sha1.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+                using (var sha256 = System.Security.Cryptography.SHA256.Create())
+                    realSha256 = BitConverter.ToString(sha256.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+
+                var validator = GeZi.DownloadEngine.Validation.IfRangeValidator.Instance;
+
+                // 1) 只有 md5 且正确 → 通过
+                var onlyMd5 = validator.VerifyAsync(path, new GeZi.DownloadEngine.Validation.HashExpectation
+                {
+                    Md5 = realMd5,
+                }, System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                Check("verify.md5_only_pass", onlyMd5.Ok && !onlyMd5.HashMismatch,
+                    "单 md5 正确必须通过");
+
+                // 2) 🚨 核心：md5 是错的（模拟夸克），但 sha1 是对的 → 必须通过
+                var wrongMd5RightSha1 = validator.VerifyAsync(path, new GeZi.DownloadEngine.Validation.HashExpectation
+                {
+                    Md5 = "00000000000000000000000000000000",
+                    Sha1 = realSha1,
+                }, System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                Check("verify.wrong_md5_right_sha1_pass",
+                    wrongMd5RightSha1.Ok && !wrongMd5RightSha1.HashMismatch,
+                    "md5 错但 sha1 对时必须判为通过（夸克就是这个情况）");
+
+                // 3) 三算法全给且都对 → 通过
+                var allRight = validator.VerifyAsync(path, new GeZi.DownloadEngine.Validation.HashExpectation
+                {
+                    Md5 = realMd5,
+                    Sha1 = realSha1,
+                    Sha256 = realSha256,
+                }, System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                Check("verify.all_algorithms_pass", allRight.Ok && !allRight.HashMismatch,
+                    "三算法全对必须通过");
+
+                // 4) 三算法全错 → 必须报不一致（绝不能放行）
+                var allWrong = validator.VerifyAsync(path, new GeZi.DownloadEngine.Validation.HashExpectation
+                {
+                    Md5 = "11111111111111111111111111111111",
+                    Sha1 = "2222222222222222222222222222222222222222",
+                    Sha256 = "3333333333333333333333333333333333333333333333333333333333333333",
+                }, System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                Check("verify.all_wrong_mismatch",
+                    allWrong.Ok && allWrong.HashMismatch,
+                    "三算法全错必须报不一致（HashMismatch=true 交给上层抽样复核）");
+
+                // 5) 一个哈希都没给 → Skip，不能当成失败
+                var none = validator.VerifyAsync(path, new GeZi.DownloadEngine.Validation.HashExpectation
+                {
+                }, System.Threading.CancellationToken.None).GetAwaiter().GetResult();
+                Check("verify.no_hash_skip", none.Ok && none.Skipped,
+                    "没有哈希时必须 Skip（不是失败）");
+            }
+            finally
+            {
+                try { if (System.IO.File.Exists(path)) System.IO.File.Delete(path); } catch { }
+            }
         }
 
 

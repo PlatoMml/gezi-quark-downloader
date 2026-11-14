@@ -939,6 +939,31 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
         }
     }
 
+    private int _stalledChunkRounds = 30;
+
+    /// <summary>
+    /// 一片连续多少轮重试**一个字节都没下动**就熔断（2026-11-14，「失败永不判死」配套）。
+    /// <para>
+    /// 背景：分片重试额度是 <c>int.MaxValue</c>（无限），一条死掉/被限速到 0 的连接会永远
+    /// 在「失败 → 退避 → 重连 → 再失败」里打转，界面卡在 99.x% 看似死机（issue #21）。
+    /// 达到本阈值后抛 <see cref="ChunkStalledException"/>，**只让本轮收手**：
+    /// 续传快照照常保存、任务标成「失败（可继续）」，用户重试即可从断点接着下。
+    /// </para>
+    /// <para>
+    /// 取值理由：一轮重试的退避是 150ms→5s 指数增长，30 轮约等于「连续十几分钟毫无进展」，
+    /// 正常网络抖动绝不可能连续 30 轮零字节。设 0 或负数表示关闭熔断（退回旧行为）。
+    /// </para>
+    /// </summary>
+    public int StalledChunkRounds
+    {
+        get => _stalledChunkRounds;
+        set
+        {
+            _stalledChunkRounds = value;
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>
     /// Download file chunks as Parallel or Serial?
     /// </summary>

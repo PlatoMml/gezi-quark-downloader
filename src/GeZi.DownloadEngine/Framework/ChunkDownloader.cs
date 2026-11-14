@@ -134,6 +134,31 @@ internal class ChunkDownloader
         catch (Exception error) when (Chunk.CanTryAgainOnFailover() && error.IsMomentumError())
         {
             _logger?.LogError(error, $"分片 {Chunk.Id} 下载出错，准备重试");
+
+            // 🚨🚨 2026-11-14 「失败永不判死」的熔断：连续若干轮一个字节都没下动就收手。
+            //
+            // 为什么要这一步：上面的重试额度是 int.MaxValue（无限），一条彻底死掉或
+            // 被 CDN 限速到 0 的连接会永远在「失败 → 退避 → 重连 → 再失败」里打转，
+            // 界面卡在 99.x% 看起来像死机（用户 issue #21「下载到 99.7% 就没反应了」）。
+            //
+            // ⚠️ 熔断 ≠ 判失败：抛 ChunkStalledException 只是让本轮下载收手，
+            //    上层会照常 SaveResumeSnapshotAsync + 把任务标成「失败（可继续）」，
+            //    用户点重试/重启软件就能从断点接着下，一个字节都不会白下。
+            int stallRounds = _configuration.StalledChunkRounds;
+            if (stallRounds > 0)
+            {
+                int rounds = Chunk.MarkNoProgress();
+                if (rounds >= stallRounds)
+                {
+                    _logger?.LogWarning(
+                        $"分片 {Chunk.Id} 连续 {rounds} 轮没有任何进展"
+                        + $"（已下 {Chunk.Position}/{Chunk.Length}），本轮收手；"
+                        + "续传点已保留，重试可从断点继续，不会重下。");
+                    throw new ChunkStalledException(
+                        $"分片连续 {rounds} 轮没有进展（已下 {Chunk.Position}/{Chunk.Length} 字节）。");
+                }
+            }
+
             return await ContinueWithDelay(downloadRequest, pause, cancelToken).ConfigureAwait(false);
         }
         catch (Exception error)
@@ -407,6 +432,9 @@ internal class ChunkDownloader
                     long clampLen = Chunk.Length;
                     if (Chunk.Position > clampLen)
                         Chunk.Position = clampLen;
+
+                    // 2026-11-14：这一轮真的读进数据了，把「连续零进展」熔断计数清零
+                    Chunk.TouchProgress();
 
                     OnDownloadProgressChanged(new DownloadProgressChangedEventArgs(Chunk.Id) {
                         TotalBytesToReceive = Chunk.Length,

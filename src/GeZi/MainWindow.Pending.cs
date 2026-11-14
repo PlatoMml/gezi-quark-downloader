@@ -201,8 +201,16 @@ namespace GeZi
                     // 更新包下载不持久化：跨重启续传没有意义，且避免 Pending 信息残缺
                     if (t.Job.SkipPersist)
                         continue;
+                    // 🚨🚨 2026-11-14 改：把 Failed 也纳入持久化。
+                    //   原来只存 Queued/Downloading/Paused/Cancelling，失败任务**完全不入库**，
+                    //   于是「下载失败 → 关掉软件 → 再打开」任务就彻底消失了：
+                    //   用户既看不到它、也没有任何入口把它接着下（.geziresume 明明还在盘上）。
+                    //   现在失败也算「未完成」——它确实没完成，而且续传点完好，
+                    //   用户点「重试下载」就能从断点继续，一个字节都不白下。
+                    //   ⚠️ 只加 Failed，不动 Cancelled：用户主动取消的语义是「不要了」。
                     if (t.State == JobState.Queued || t.State == JobState.Downloading
-                        || t.State == JobState.Paused || t.State == JobState.Cancelling)
+                        || t.State == JobState.Paused || t.State == JobState.Cancelling
+                        || t.State == JobState.Failed)
                     {
                         // 签名里带 Dest：原来只有 Name|State，导致同一任务换了落盘路径
                         // （用户改下载目录后重新入队）时签名不变、新路径永远不落盘，
@@ -272,14 +280,16 @@ namespace GeZi
                 //
                 //   正解：先收集「当前已处于终态的任务」的 Dest；
                 //   磁盘记录若落在这些 Dest 上，说明它对应的任务已经结束，不再保留。
-                //   ⚠️ 只排除终态（Completed/Failed/Cancelled）；Cancelling 是非终态
-                //      （强杀时分片可能还没清完），必须继续保留 —— AGENTS.md 二十一节红线。
+                //   ⚠️ 只排除 Completed / Cancelled。
+                //      **Failed 绝不能排除**（2026-11-14 改）：失败任务现在会进 list 持久化，
+                //      「未完成」入口要留着让用户点「重试下载」从断点接着下。
+                //      把它们排掉 = 用户看到一个还在盘上的 .geziresume，却没有任何入口可用。
+                //      Cancelling 是非终态（强杀时分片可能还没清完），也必须继续保留 —— AGENTS.md 二十一节红线。
                 var terminalDests = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var t in _tasks)
                 {
                     if (t?.Job == null || string.IsNullOrEmpty(t.Job.Dest)) continue;
-                    if (t.State == JobState.Completed || t.State == JobState.Failed
-                        || t.State == JobState.Cancelled)
+                    if (t.State == JobState.Completed || t.State == JobState.Cancelled)
                         terminalDests.Add(t.Job.Dest);
                 }
 
@@ -399,10 +409,97 @@ namespace GeZi
                 t.State = JobState.Downloading;
                 Log("已恢复: " + t.Name);
             }
+            else if (t.State == JobState.Failed)
+            {
+                // 🚨🚨 2026-11-14 新增：失败任务也能直接重试（用户硬要求
+                //   「任何文件都不可以轻易说失败，必须有其他路径继续下载」）。
+                //   ⚠️ 不能复用 Paused 那条路：失败任务的 Job 已经跑完、CancellationToken
+                //     可能已触发、服务实例也从调度器表里摘掉了，直接 ResumeJob() 什么都
+                //     不会发生。必须**重新入队**：借磁盘上那条 PendingTask 记录重走一遍
+                //     取链 + 下载，引擎会自动命中 .geziresume 从断点接着下。
+                RetryFailedTask(t);
+            }
             else
             {
                 Log("该任务当前状态不可恢复（" + t.StatusText + "）");
             }
+        }
+
+
+        /// <summary>
+        /// 把一条失败任务重新排队，从断点接着下。
+        /// <para>
+        /// 做法：先用这条任务的 Dest 在磁盘待续传记录里找到对应条目（SyncPending 已经把
+        /// Failed 也写进去了，所以一定找得到），然后把这**一条**交给
+        /// <see cref="ResumePendingBatchAsync"/> —— 它本来就负责「重新取链 + 从断点续传」，
+        /// 走的是和新任务完全一样的成熟链路，不需要另写一套。
+        /// </para>
+        /// <para>
+        /// 找不到记录时（老版本留下的失败任务、或记录已被清理）退回「重新下载原链接」，
+        /// 至少不让用户看到「点了没反应」。
+        /// </para>
+        /// </summary>
+        private void RetryFailedTask(TaskItem t)
+        {
+            if (t?.Job == null) return;
+            string dest = t.Job.Dest;
+            string name = t.Name;
+
+            // 先从界面上摘掉旧的失败行：等一会儿新行会以「排队中」重新出现。
+            // ⚠️ 必须在异步之前摘，否则用户会看到「失败」和「排队中」两行并存。
+            RemoveTaskRow(t);
+
+            List<PendingTask> all = null;
+            try { all = HistoryStore.GetPending(); }
+            catch { }
+            PendingTask target = null;
+            if (all != null && !string.IsNullOrEmpty(dest))
+            {
+                foreach (var p in all)
+                {
+                    if (p == null || string.IsNullOrEmpty(p.Dest)) continue;
+                    if (string.Equals(p.Dest, dest, StringComparison.OrdinalIgnoreCase))
+                    {
+                        target = p;
+                        break;
+                    }
+                }
+            }
+
+            if (target == null)
+            {
+                // 没有待续传记录 → 只能从头来。仍然给用户一个明确出路。
+                Log("该任务没有可续传的进度记录，将重新下载：" + name);
+                ResumeTaskByUrl(t);
+                return;
+            }
+
+            Log("重试下载：" + name + "（从已下载的部分继续，不会重下）");
+            // 走与「未完成」入口完全相同的续传链路。
+            // ⚠️ 不 await：它内部有大量异步 I/O，UI 线程不能等；它自己会回主线程更新界面。
+            _ = ResumePendingBatchAsync(new List<PendingTask> { target });
+        }
+
+
+        /// <summary>
+        /// 没有待续传记录时的兜底：明确告诉用户下一步怎么做。
+        /// <para>
+        /// ⚠️ 这里**不**尝试复用原 job 重新下载 —— <see cref="DownloadJob.Cancel"/> 是只读的
+        /// <c>CancellationTokenSource</c>，一旦取消无法复位（net48 没有 <c>TryReset</c>），
+        /// 硬塞回去只会得到一个立刻又取消的空转任务，比不做事更糟。
+        /// 正常路径下走不到这里：SyncPending 已把 Failure 也写进磁盘记录。
+        /// </para>
+        /// </summary>
+        private void ResumeTaskByUrl(TaskItem t)
+        {
+            string name = t?.Name ?? "";
+            Log("该任务没有可续传的进度记录，无法自动重试：" + name);
+            AppDialog.Show(this,
+                "这条任务没有留下可续传的进度记录（可能是旧版本创建的失败任务）。\n\n"
+                + "请回到浏览页重新点一次「下载」，会从头开始。",
+                "无法重试",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
 
 

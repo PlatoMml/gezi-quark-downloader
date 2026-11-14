@@ -893,8 +893,17 @@ namespace GeZi.Providers.Aliyun
                             ? (PanJson.AsString(PanJson.Get(res, "name")) ?? f.Fid)
                             : f.Name,
                         Size = f.Size > 0 ? f.Size : PanJson.AsLong(PanJson.Get(res, "size")),
-                        Md5 = f.Md5 ?? PanJson.AsString(PanJson.Get(res, "content_hash")),
-                        Sha1 = f.Sha1,
+                        // 🚨🚨 2026-11-14 修：这里原来是
+                        //     Md5 = f.Md5 ?? PanJson.AsString(PanJson.Get(res, "content_hash")),
+                        // 把阿里的 content_hash 当成 md5 兜底 —— 但 content_hash 实际是 **sha1**
+                        // （见本文件 ToFileEntry 里的注释「阿里的 content_hash 通常是 sha1，这里按 sha1 存」）。
+                        // 后果：sha1 的值被塞进 Md5 字段，校验时算 md5 去比 sha1，**必然 100% 不一致**，
+                        // 用户每个阿里文件下完都看到「MD5 不一致」，还会多跑一遍 12 秒抽样复核。
+                        // 现在：md5 只认 f.Md5；content_hash 只在 sha1 缺失时当 sha1 用（它本来就是）。
+                        Md5 = f.Md5,
+                        Sha1 = !string.IsNullOrEmpty(f.Sha1)
+                            ? f.Sha1
+                            : PanJson.AsString(PanJson.Get(res, "content_hash")),
                         Sha256 = f.Sha256,
                         // 走了转存兜底才有值；下载结束由上层调 CleanupStoredAsync 删这个目录。
                         StoredId = storedFolder,

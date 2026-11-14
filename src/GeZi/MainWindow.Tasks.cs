@@ -589,6 +589,12 @@ namespace GeZi
             TaskPauseResumeItem.Visibility = anyLive ? Visibility.Visible : Visibility.Collapsed;
             TaskCancelItem.Visibility = anyLive ? Visibility.Visible : Visibility.Collapsed;
 
+            // 🚨 2026-11-14 新增：「重试下载」只在选中里有失败任务时出现。
+            //   失败任务现在可以续传（SyncPending 已把它写进待续传记录），
+            //   这条入口就是用户「让失败的文件接着下」的唯一按钮。
+            bool anyFailed = list.Any(x => x.State == JobState.Failed);
+            TaskRetryItem.Visibility = anyFailed ? Visibility.Visible : Visibility.Collapsed;
+
             // 播放：只要选中里有一个能播就显示（多选时点一下打开第一个能播的）。
             TaskPlayItem.Visibility = list.Any(x => x.CanPlay)
                 ? Visibility.Visible : Visibility.Collapsed;
@@ -597,8 +603,27 @@ namespace GeZi
             // 2026-11-01：「仅移除记录」及其专属分隔线 TaskMenuSep2 已删除，
             // 现在只剩 TaskMenuSep1 一条，用来隔开「终止类操作」与「打开类操作」。
             TaskMenuSep1.Visibility = (TaskPlayItem.Visibility == Visibility.Visible
-                                       || TaskCancelItem.Visibility == Visibility.Visible)
+                                       || TaskCancelItem.Visibility == Visibility.Visible
+                                       || TaskRetryItem.Visibility == Visibility.Visible)
                 ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+
+        /// <summary>
+        /// 「重试下载」：让失败的任务从断点接着下。
+        /// <para>
+        /// 与 <see cref="ResumeTask"/> 里的 Failed 分支是同一件事，这里只是多选入口。
+        /// </para>
+        /// </summary>
+        private void OnTaskRetry(object sender, RoutedEventArgs e)
+        {
+            var list = TasksFromMenu(sender);
+            if (list.Count == 0) return;
+            foreach (var t in list)
+            {
+                if (t.State != JobState.Failed) continue;
+                ResumeTask(t);
+            }
         }
 
 

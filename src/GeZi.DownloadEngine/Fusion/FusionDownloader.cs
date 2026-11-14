@@ -931,10 +931,30 @@ namespace GeZi.DownloadEngine
             }
         }
 
+        /// <summary>
+        /// 判断一个 <see cref="IOException"/> 是不是「网络传输层断开」而不是「磁盘写坏了」。
+        /// <para>
+        /// 🚨 2026-11-14 修 issue #18：.NET Framework 的 ConnectStream 读响应体时抛的是
+        /// <c>IOException("无法从传输连接中读取数据: 连接已关闭。")</c> —— 本质是网络断开，
+        /// 却被原来的 <c>if (ex is IOException)</c> 一律说成「写盘失败」。用户会去查磁盘空间、
+        /// 换硬盘，白折腾。这里只认传输层特征，磁盘类错误（磁盘已满/被占用/无权限）不会命中。
+        /// </para>
+        /// </summary>
+        /// <summary>
+        /// 异常是不是「传输层断开」而不是磁盘问题。
+        /// <para>
+        /// 🚨 2026-11-14：判据已统一到 <see cref="GeZi.Core.Support.RetryPolicy.IsTransportIo"/>，
+        /// 自检可以直接断言，也避免这里与调度器各留一份慢慢漂移。
+        /// </para>
+        /// </summary>
+        private static bool IsTransportIoError(Exception ex)
+        {
+            return GeZi.Core.Support.RetryPolicy.IsTransportIo(ex);
+        }
+
         /// <summary>把异常翻译成用户看得懂的一句话（避免把英文堆栈丢到界面上）。</summary>
         private static string DescribeFailure(Exception ex)
-        {
-            var we = ex as System.Net.WebException;
+        {            var we = ex as System.Net.WebException;
             if (we != null)
             {
                 if (we.Response != null)
@@ -989,6 +1009,17 @@ namespace GeZi.DownloadEngine
 
             if (ex is IOException)
             {
+                // 🚨🚨 2026-11-14 修 issue #18：原来这里无条件写「写盘失败：」，但
+                // .NET Framework 的 ConnectStream 在读响应体时抛的也是 IOException：
+                //     "无法从传输连接中读取数据: 连接已关闭。"
+                // 那是**网络断开**，跟磁盘一点关系都没有。套上「写盘失败」前缀会让用户以为
+                // 硬盘出问题，去查磁盘空间、去换盘，白折腾（issue #18 就是这样）。
+                // 现在：只有真·磁盘错误才说「写盘失败」，传输层断开照实说网络问题。
+                if (IsTransportIoError(ex))
+                {
+                    return "下载中断：网络连接被服务端或中间设备断开（" + ex.Message
+                        + "）。已下载部分会保留，可直接重试续传。";
+                }
                 return "写盘失败：" + ex.Message;
             }
 
