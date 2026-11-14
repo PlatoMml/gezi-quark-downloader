@@ -56,7 +56,9 @@ namespace GeZi
                     ResizeMode = ResizeMode.NoResize,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 };
-                DialogChrome.StyleWindow(dlg, 500, 430);
+                // 内容很少（一句磁盘说明 + 最多 4 行建议 + 一个关闭按钮），
+                // 用小窗即可，别给大窗口留大片空白（用户 m17940 反馈窗口太大）。
+                DialogChrome.StyleWindow(dlg, 460, 300);
 
                 var root = DialogChrome.DialogRoot();
                 root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                    // 磁盘介质说明

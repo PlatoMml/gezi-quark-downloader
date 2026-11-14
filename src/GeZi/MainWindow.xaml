@@ -2144,10 +2144,9 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <!-- ⑥ 风控参谋：被动采集真实下载记录，攒够样本后给建议。
+                                    <!-- 风控参谋：被动采集真实下载记录，攒够样本后给建议。
                                          只观察、不主动探测 —— 每次任务结束后记一笔「网盘+线程+峰值速度+是否停滞」，
-                                         攒够 3 次才参谋。内容由代码端 RefreshAdvisorCard() 填充，
-                                         冷启动时显示磁盘介质兜底，不留大片空白。 -->
+                                         攒够 3 次才参谋。点「查看」弹小窗展示，卡片本身只留标题+一行介绍。 -->
                                     <Border Style="{StaticResource SettingsCard}"
                                             Margin="0,12,0,0" HorizontalAlignment="Stretch">
                                         <StackPanel>
