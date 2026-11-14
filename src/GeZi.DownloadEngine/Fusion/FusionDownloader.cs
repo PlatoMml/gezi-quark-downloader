@@ -606,9 +606,20 @@ namespace GeZi.DownloadEngine
                 //   与 PreemptMinBytes（512KB，慢片抢占用）刻意分开：
                 //   收尾时剩下的大片要能切得比 512KB 更细，才能把空闲 worker 填满。
                 //   依据 refs/YunX 的 ElasticAllocator：尾部把块压到 remaining/workers，
-                //   下限 MIN_TAIL_BLOCK 取 64KB；这里保守取 256KB
-                //   （每片仍要一次 Range 请求，太碎会拖慢快连接）。
-                TailRefillMinBytes = 256L * 1024,
+                //   下限 MIN_TAIL_BLOCK 取 64KB。
+                //
+                // 🚨🚨 2026-11-14：**这行原来写 256KB，是一个把上游修复整个覆盖掉的 bug**。
+                //   DownloadConfiguration._tailRefillMinBytes 已在 2026-11-08（提交 9846055）
+                //   从 256KB 降到 64KB 并写明「这是修回归，不是调参」，
+                //   但本行是 2026-10-29 五层重构（提交 6f0299b）留下的老值，
+                //   一路把引擎默认值覆盖回 256KB ⇒ 那次修复线上从未生效。
+                //   后果链：2026-11-07 分片公式改造后常规片长降到 128KB，
+                //   而 TryRefillTail 的门槛 `maxRemain / 256KB < 2 → return false`，
+                //   128KB 的片算出来是 0 份 ⇒ 收尾期一刀都切不出来 ⇒
+                //   末段退化成「剩余片数 × 单连接速度」，界面卡在 99.x% 磨很久。
+                //   ⇒ 必须与 DownloadConfiguration 的默认值一致（64KB）。
+                //   64KB 也是 refs/YunX 的 MIN_TAIL_BLOCK 实测值。
+                TailRefillMinBytes = 64L * 1024,
                 // 慢连接看门狗：低于 16 KB/s 持续 10 秒就主动断开重连（换条新 TCP 连接）。
                 // 实测（8MB/8 线程，首连接 8 KB/s、其余 60 KB/s）：
                 //   关闭 → 126.6 秒；开启 → 22.5 秒，快 5.6 倍。

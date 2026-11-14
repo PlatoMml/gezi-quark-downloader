@@ -110,6 +110,22 @@ public class DownloadService : AbstractDownloadService
         new ConcurrentDictionary<string, Chunk>(StringComparer.Ordinal);
 
     /// <summary>
+    /// 上一次全量汇总 <see cref="_splitChunks"/> 的时刻（Environment.TickCount，毫秒）。
+    ///
+    /// <para>
+    /// 🚨 2026-11-14：尾巴分片的片长从 256KB 降到 64KB 后，末段可以切出上千片，
+    /// 而进度回调是**每写 64KB 触发一次**（满速 24 MB/s ≈ 每秒 375 次）。
+    /// 每次都全量遍历 <see cref="_splitChunks"/> 是纯浪费 CPU —— 它只影响
+    /// <see cref="DownloadPackage.ExtraReceivedBytes"/> 这个显示用的统计值，
+    /// 不参与任何下载/完成判定，所以完全可以按时间节流。
+    /// </para>
+    /// </summary>
+    private int _extraRefreshedAtMs;
+
+    /// <summary>尾巴分片汇总之最小间隔（毫秒）。进度显示不需要更高频。</summary>
+    private const int ExtraRefreshIntervalMs = 500;
+
+    /// <summary>
     /// 分片表读写的互斥锁（2026-11-01，续传可靠性方案 A）。
     /// <para>
     /// 🚨🚨 为什么必须有它：<c>TrySplitChunk</c> / <c>TrySplitChunkTail</c> 的动作是两步 ——
@@ -369,7 +385,7 @@ public class DownloadService : AbstractDownloadService
             // 顺序写模式不受影响，因为它的 WriteAsync 内部就同步刷盘了。
             // 刷盘阶段：共写模式要把后台写队列排空，几百 MB 可能要几秒。
             // 这期间没有网络流量，必须显式告诉界面「在干本地活」，否则看起来像卡死。
-            RefreshExtraReceivedBytes();
+            RefreshExtraReceivedBytes(force: true);
             SchedulePhase("正在写入磁盘…");
             var flushClock = System.Diagnostics.Stopwatch.StartNew();
             await (Package?.Storage?.FlushAsync(force: true) ?? Task.FromResult(0)).ConfigureAwait(false);
@@ -378,7 +394,7 @@ public class DownloadService : AbstractDownloadService
             _logger?.LogInfo("收尾：刷盘耗时 " + flushClock.ElapsedMilliseconds + " ms");
 
             // 校验阶段：SHA-256 几百 MB 要数秒，同样没有网络流量。
-            RefreshExtraReceivedBytes();
+            RefreshExtraReceivedBytes(force: true);
             SchedulePhase("正在校验文件完整性…");
             var verifyClock = System.Diagnostics.Stopwatch.StartNew();
             VerifyOutcome verify = await VerifyContentAsync().ConfigureAwait(false);
@@ -2640,12 +2656,34 @@ public class DownloadService : AbstractDownloadService
     }
 
     /// <summary>把 <see cref="_splitChunks"/> 里各尾巴分片的已写字节汇总进 <see cref="DownloadPackage.ExtraReceivedBytes"/>。</summary>
-    private void RefreshExtraReceivedBytes()
+    /// <param name="force">
+    /// true = 跳过 500ms 节流立刻汇总。收尾刷盘/校验前必须用 true，
+    /// 否则最后的尾巴字节可能没算进去，进度少一截。
+    /// </param>
+    private void RefreshExtraReceivedBytes(bool force = false)
     {
         if (_splitChunks.Count == 0)
         {
             return;
         }
+
+        // 🚨 2026-11-14：按 500ms 节流。
+        //
+        // 尾巴分片片长降到 64KB 后，末段可能有上千片，而本方法由**每次分片进度回调**
+        // （每 64KB 一次，满速约每秒数百次）触发 → 每次全量遍历上千项。
+        // 它只写 Package.ExtraReceivedBytes（纯显示统计），不参与任何判定，
+        // 所以按时间节流完全等价；关掉节流也只会更卡，不会更准。
+        if (!force)
+        {
+            int now = Environment.TickCount;
+            int last = Volatile.Read(ref _extraRefreshedAtMs);
+            if (unchecked(now - last) < ExtraRefreshIntervalMs)
+            {
+                return;
+            }
+            Volatile.Write(ref _extraRefreshedAtMs, now);
+        }
+
         long extra = 0;
         foreach (var kv in _splitChunks)
         {
@@ -2805,126 +2843,103 @@ public class DownloadService : AbstractDownloadService
             //   这样 2 个大片也能被摊成 16 份，让全部 worker 并行冲完最后一段。
             //
             // 关键：**先算总量再决定切不切**，而不是"切一刀看还剩多少"。
+            //
+            // 🚨 2026-11-14：这里原来要**两遍**全量扫 active（一遍算 remainTotal、
+            //    一遍算 maxRemain），而下面切片的 while 循环里**每一刀还要再扫一遍**
+            //    找最大片。片数上千时一轮就是几十万次字典遍历，抢占监控每 2 秒跑一次。
+            //    现在合并成一遍，顺带把候选列表缓存下来（按剩余量降序），
+            //    后面切片只按缓存顺序走，不再反复扫表。
             long remainTotal = 0;
-            foreach (var kv in active)
-            {
-                Chunk c = kv.Value;
-                if (c == null)
-                    continue;
-                long pos2 = Interlocked.Read(ref c.PositionRaw);
-                remainTotal += c.End - (c.Start + pos2) + 1;
-            }
-
-            if (remainTotal <= 0)
-                return false;
-
-            // ★ 每份大小必须按「**单个最大片**的剩余量」来算，不能按 remainTotal 算。
-            //
-            // 2026-11-01 实测踩到的坑（诊断 D3/D5 坐实）：
-            //   末段只剩 2~3 个片在跑，比如 768KB + 448KB，总量 1.2MB、缺口 6 份。
-            //   按总量均分 → slice = 1.2MB / 6 = 200KB（看似合理）；
-            //   但如果按 remainTotal/deficit 得到 slice=832KB，而单个最大片只有 768KB，
-            //   条件 biggestRemain(768KB) < slice(832KB) + min(256KB) 恒成立 → 一刀都切不出去。
-            //   实测就是「539 次调用只切出 1 片」，14 个 worker 全程空转。
-            //
-            // 正解：以**最大片的剩余量**为基准，把它摊成若干份，每份 ≥ TailRefillMinBytes。
-            //   这样 768KB 的片能被摊成 3 份 256KB，立刻多出 2 个可领分片。
             long maxRemain = 0;
+            var candidates = new List<Chunk>(active.Count);
             foreach (var kv in active)
             {
                 Chunk c = kv.Value;
                 if (c == null)
                     continue;
-                long pos2 = Interlocked.Read(ref c.PositionRaw);
-                long rem = c.End - (c.Start + pos2) + 1;
+                long rem = RemainingOf(c);
+                if (rem <= 0)
+                    continue;
+                remainTotal += rem;
                 if (rem > maxRemain)
                     maxRemain = rem;
+                candidates.Add(c);
             }
 
-            if (maxRemain <= 0)
+            if (remainTotal <= 0 || maxRemain <= 0)
                 return false;
 
-            // 这个最大片最多能被切成几份（每份不低于下限）。
-            long maxSlices = maxRemain / Options.TailRefillMinBytes;
-            if (maxSlices < 2)
-                return false;   // 连两刀都切不出来，补片没意义
+            // 按剩余量从大到小排：先从最大的片开始切，小片留到最后。
+            candidates.Sort((a, b) => RemainingOf(b).CompareTo(RemainingOf(a)));
 
-            // 取「缺口数」与「能切的份数」的较小者，再据此算每份大小。
-            int slicesWanted = deficit;
-            if (slicesWanted > maxSlices)
-                slicesWanted = (int)maxSlices;
-            if (slicesWanted < 2)
-                slicesWanted = 2;
+            // ★★★ 每份大小用 DownloadSizing.TailShrink 算，基准是**剩余总量**，不是单片最大量。
+            //
+            // 🚨 2026-11-14 修正：原来是 sliceBytes = maxRemain / slicesWanted，
+            //    只看「单片最大剩余」，完全不看总剩余量。后果是两种极端：
+            //      · 66MB 全在一个 2MB 片之外（真实末段）→ 算出 256KB，片数上限 264，
+            //        1024 路里 760 个 worker 空转 → 尾部只剩 264 × 单连接速度；
+            //      · 1.1GB 散在 50 个 22MB 片上 → 算出 64KB，变成 17000 个 Range 请求 + 握手。
+            //
+            //    TailShrink(remaining, workers, baseSlice, minBytes) 语义（对齐 refs/YunX
+            //    ElasticAllocator.take）：只有「剩余量 ≤ workers × baseSlice」才收缩成
+            //    remaining/workers（夹在 [minBytes, baseSlice]），否则就用 baseSlice。
+            //    ⇒ 剩余量足够时不会切碎，剩余量见底时才细分成「每个 worker 一份」。
+            //
+            // baseSlice 取自适应值（单连接 5 秒能下完的量，夹 [minBytes, 4MB]），
+            // 取不到速度时退回 TailRefillMinBytes —— 不能让「还没测出速度」把块算成 0。
+            long baseSlice = AdaptiveTailSliceBytes();
+            if (baseSlice < Options.TailRefillMinBytes)
+                baseSlice = Options.TailRefillMinBytes;
 
-            long sliceBytes = maxRemain / slicesWanted;
-            if (sliceBytes < Options.TailRefillMinBytes)
+            long sliceBytes = GeZi.Core.Support.DownloadSizing.TailShrink(remainTotal, target, baseSlice, Options.TailRefillMinBytes);
+            if (sliceBytes <= 0)
                 sliceBytes = Options.TailRefillMinBytes;
 
-            // 🚨🚨 2026-11-05 新增：**速度自适应块大小**（对齐 refs/YunX 的 ElasticAllocator）。
+            // 按「份」切：从剩余量最大的片开始，每片切出 sliceBytes 一段塞回队列。
             //
-            // YunX 的做法（ElasticAllocator.baseBlockSize）：
-            //     块 ≈ 单 worker 下载 TARGET_SECONDS(5秒) 的量，夹在 [256KB, 4MB]
-            // 它这么设计是因为：
-            //   · 快连接 → 用大块，省掉每次 Range 请求的建连/握手开销；
-            //   · 慢连接 → 用小块，让「最后一点数据」能摊到所有连接上并行冲完。
-            //
-            // 我们原来是纯静态的：sliceBytes = maxRemain / slicesWanted，
-            // 只跟「剩余量 / 缺口数」有关，**完全不看速度**。
-            // 后果：链路很慢时（单连接 10KB/s），切出来的 256KB 块要磨 26 秒；
-            //       而链路很快时，256KB 又太小 —— 每切一块都要重新建连，纯亏。
-            //
-            // 现在按实测速度校准：块 = 单连接 5 秒能下完的量。
-            //   · 阈值仍由 TailRefillMinBytes 兜底（不低于 256KB，避免碎片化）；
-            //   · 上限 4MB（对齐 YunX 的 MAX_ELASTIC_BLOCK，过大块会降低动态性）。
-            // ⚠️ 速度取不到（0）时保持原值 —— 不能让「还没测出速度」把块算成 0。
-            long adaptive = AdaptiveTailSliceBytes();
-            if (adaptive > 0)
-            {
-                // 自适应值只做**上限收窄**，不放宽：
-                // 放宽会让「剩余量很少」时切出超过剩余量的块（切不动）。
-                if (adaptive < sliceBytes)
-                    sliceBytes = Math.Max(adaptive, Options.TailRefillMinBytes);
-            }
-
-            // 按「份」切：每次从最大的片子里切出 sliceBytes 一段塞回队列。
-            // 与二分不同，这里切出的尾巴大小固定 = sliceBytes，
-            // 所以 2 个 768KB 的片可以被切成 6 份 256KB，真正填满空闲 worker。
+            // 🚨 2026-11-14 修两个问题：
+            //   ① 原来 while 循环里**每一刀都要重新全量扫一遍 active** 找最大片
+            //      （片数上千时一轮就是几十万次字典遍历，而抢占监控每 2 秒跑一次）；
+            //      现在直接用循环外排好序的 candidates，一刀都不再扫表。
+            //   ② 原来「切不动最大片」就 break 整体退出 —— 可 TrySplitChunkTail 失败
+            //      未必是因为它太小（可能是保存快照期间暂停切分），
+            //      第二、第三个大片明明能切却被一起放弃，填满 worker 白等十几轮。
+            //      现在只有「剩余量真的不够」才收工，切失败就换下一个继续。
             int produced = 0;
             int budget = deficit < target ? deficit : target;
-            while (produced < budget)
+            foreach (Chunk c in candidates)
             {
-                Chunk biggest = null;
-                long biggestRemain = 0;
-                foreach (var kv in active)
-                {
-                    Chunk c = kv.Value;
-                    if (c == null)
-                        continue;
-                    long pos2 = Interlocked.Read(ref c.PositionRaw);
-                    long rem = c.End - (c.Start + pos2) + 1;
-                    if (rem > biggestRemain)
-                    {
-                        biggestRemain = rem;
-                        biggest = c;
-                    }
-                }
-
-                if (biggest == null)
+                if (produced >= budget)
                     break;
 
-                // 这个片剩下的不够再切一份了 → 停（它已经是最大的了，其它更切不动）。
-                if (biggestRemain < sliceBytes + Options.TailRefillMinBytes)
+                // candidates 已按剩余量降序：这个不够切，后面只会更小 → 真的收工。
+                if (RemainingOf(c) < sliceBytes + Options.TailRefillMinBytes)
                     break;
 
-                // 从尾部切出 sliceBytes 一段（不是切一半）。
-                if (!TrySplitChunkTail(biggest, queue, sliceBytes))
-                    break;
-
-                produced++;
+                // 从尾部切出 sliceBytes 一段（不是切一半）。切失败换下一个，不整体退出。
+                if (TrySplitChunkTail(c, queue, sliceBytes))
+                    produced++;
             }
 
             return produced > 0;
         }
+    }
+
+    /// <summary>
+    /// 取一个分片「还没下到的字节数」（闭区间，正数才有意义）。
+    ///
+    /// <para>
+    /// 用 <see cref="Interlocked.Read(ref long)"/> 读 <c>PositionRaw</c> 而不是读
+    /// <c>Position</c> 属性 —— worker 线程在并发推进它，非原子读会取到撕裂值。
+    /// </para>
+    /// </summary>
+    private static long RemainingOf(Chunk chunk)
+    {
+        if (chunk == null)
+            return 0;
+        long pos = Interlocked.Read(ref chunk.PositionRaw);
+        long remain = chunk.End - (chunk.Start + pos) + 1;
+        return remain > 0 ? remain : 0;
     }
 
     /// <summary>

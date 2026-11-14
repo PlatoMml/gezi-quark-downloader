@@ -2039,6 +2039,49 @@ namespace GeZi.SelfTest
             Check("sizing.tail_bad_input",
                 GeZi.Core.Support.DownloadSizing.TailShrink(0, 16, baseSlice, min) == 0,
                 "非法剩余量返回 0（调用方保持原值）");
+
+            // 🚨 2026-11-14：末段切片的下限从 256KB 降到 64KB 后，必须钉死三件事，
+            // 否则将来有人"调参"把下限抬回去，尾部就又会只剩「剩余片数 × 单连接速度」。
+            const long tailMin = 64L * 1024;
+
+            // ① 66MB 末段 / 1024 并发：必须能切成 ≥1024 份，否则 1024 个 worker 大半空转。
+            //    现状（下限 256KB）只能切 264 份 —— 这正是「卡 99%」的算术根因。
+            long remain66 = 66L * 1024 * 1024;
+            long slice66 = GeZi.Core.Support.DownloadSizing.TailShrink(
+                remain66, 1024, GeZi.Core.Support.DownloadSizing.MaxSliceBytes, tailMin);
+            long parts66 = slice66 > 0 ? remain66 / slice66 : 0;
+            Check("tailslice.fill_all_workers", parts66 >= 1024,
+                "66MB 末段 / 1024 并发至少要能切成 1024 份，实得 " + parts66 + " 份（片长 " + slice66 + "）");
+
+            // ② 同样场景下若是老下限 256KB，只能切 264 份 —— 用断言把"回归"挡住。
+            long sliceOld = 256L * 1024;
+            long partsOld = remain66 / sliceOld;
+            Check("tailslice.old_floor_starves", partsOld < 1024,
+                "老下限 256KB 只能切 " + partsOld + " 份（<1024），证明这就是卡 99% 的算术原因");
+
+            // ③ 1.1GB 散在多个大片上时**不能**被切碎：片长必须远大于 64KB，
+            //    否则会变成上万次 Range 请求 + TLS 握手（OpenSSL 数据面无连接池）。
+            long sliceBig = GeZi.Core.Support.DownloadSizing.TailShrink(
+                1100L * 1024 * 1024, 1024, GeZi.Core.Support.DownloadSizing.MaxSliceBytes, tailMin);
+            Check("tailslice.never_shred_when_plenty", sliceBig > tailMin * 4,
+                "剩余充足时片长应明显大于下限，实=" + sliceBig);
+
+            // ④ 下限本身必须允许 64KB（DownloadConfiguration 的 setter 硬下限也是 64KB）。
+            Check("tailslice.min_floor_is_64k", tailMin == 65536,
+                "末段片长下限必须是 64KB（对齐 refs/YunX 的 MIN_TAIL_BLOCK）");
+
+            // ⑤ 默认值必须就是 64KB —— 2026-11-08 的 9846055 已经把它改对过一次，
+            //    但 FusionDownloader 那行老值（256KB）把它整个覆盖掉，导致那次修复
+            //    线上从未生效。这条断言钉死"默认值"，防止再次被上层悄悄改回。
+            var cfgDefault = new GeZi.DownloadEngine.Framework.DownloadConfiguration();
+            Check("tailslice.config_default_64k", cfgDefault.TailRefillMinBytes == 64 * 1024,
+                "DownloadConfiguration 默认 TailRefillMinBytes 必须是 64KB，实=" + cfgDefault.TailRefillMinBytes);
+
+            // ⑥ setter 的下限保护：任何更小的注入都要被抬回 64KB（防止 0 / 负数）。
+            var cfgClamp = new GeZi.DownloadEngine.Framework.DownloadConfiguration();
+            cfgClamp.TailRefillMinBytes = 1;
+            Check("tailslice.config_setter_clamps", cfgClamp.TailRefillMinBytes == 64 * 1024,
+                "小于 64KB 的注入必须被抬回 64KB，实=" + cfgClamp.TailRefillMinBytes);
         }
 
 
