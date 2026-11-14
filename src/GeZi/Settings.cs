@@ -464,6 +464,15 @@ namespace GeZi
         /// 失败后把冷却期持久化，重启后仍在冷却期内就直接跳过；续期成功清零。
         /// </summary>
         public long AliyunRenewFailedTicks { get; set; }
+
+        /// <summary>
+        /// 🚨 2026-11-14：上次「迅雷自动续期失败」的时刻（UTC Ticks），0 = 从未失败。
+        /// 与 <see cref="AliyunRenewFailedTicks"/> 同构：迅雷的 refresh_token 是**单次有效、
+        /// 用一次就轮换**的（无论成败服务端都可能作废旧值），失败后必须冷却，否则每次
+        /// 四卡实测失败都白耗一次 refresh_token，把"还能救"的账号硬耗成"必须重新登录"。
+        /// 失败后把冷却期持久化，重启后仍在冷却期内就直接跳过；续期成功清零。
+        /// </summary>
+        public long XunleiRenewFailedTicks { get; set; }
     }
 
     /// <summary>主窗口「关闭」按钮的行为。</summary>

@@ -1449,6 +1449,10 @@ namespace GeZi
                 case PanKind.Aliyun:
                     _settings.AliyunRefreshToken = "";
                     _settings.AliyunAccessToken = "";
+                    // 设备身份（device_id + secp256k1 私钥）是「这台机器曾登录过阿里」的凭证，
+                    // 登出必须一并清掉，否则配置里残留设备字段、下次会被当成「已登录过」。
+                    _settings.AliyunDeviceId = "";
+                    _settings.AliyunDevicePrivateKey = "";
                     break;
                 case PanKind.Xunlei:
                     _settings.XunleiPanToken = "";

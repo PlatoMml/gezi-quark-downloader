@@ -1926,6 +1926,10 @@ namespace GeZi
                                     try { p.Dispose(); } catch { }
                                 if (kind == PanKind.Aliyun)
                                     TryAutoRenewAliyunCredential("缺少可续期的令牌");
+                                // 迅雷 pan_token 为空但手里有 refresh_token：同样交给自动续期换新，
+                                // 而不是直接判"未登录"。
+                                else if (kind == PanKind.Xunlei)
+                                    TryAutoRenewXunleiCredential("缺少可用的令牌");
                                 continue;
                             }
                             try
@@ -1995,6 +1999,11 @@ namespace GeZi
                             // 用户要求做成全自动：察觉失效就续期，不需要点任何按钮。
                             if (kind == PanKind.Aliyun)
                                 TryAutoRenewAliyunCredential("校验未通过");
+                            // 迅雷 pan_token 约两小时寿命，手里有 refresh_token 就能静默换新。
+                            // 2026-11-14 之前这里只有阿里有自动续期，迅雷失效就永远失效，
+                            // 用户只能手动重新登录（"迅雷账号在但不可用"的根因）。
+                            else if (kind == PanKind.Xunlei)
+                                TryAutoRenewXunleiCredential("校验未通过");
                         }
                     }
                     catch (Exception ex)
