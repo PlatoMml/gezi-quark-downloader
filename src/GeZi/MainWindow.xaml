@@ -2237,6 +2237,26 @@
                                                                Text="四家网盘都生效。关掉后转存副本会保留在你的网盘里。"/>
                                                 </StackPanel>
                                             </Grid>
+
+                                            <Grid Style="{StaticResource SettingsRow3}" Margin="0">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="160"/>
+                                                    <ColumnDefinition Width="*"/>
+                                                </Grid.ColumnDefinitions>
+                                                <TextBlock Grid.Column="0" Text="严格校验"
+                                                           Style="{StaticResource SettingsRowLabel}"/>
+                                                <StackPanel Grid.Column="1">
+                                                    <CheckBox x:Name="StrictVerifyCheck"
+                                                              Content="下载完成后全量哈希校验"
+                                                              Style="{StaticResource AppCheckBox}"
+                                                              VerticalAlignment="Center"
+                                                              Click="OnGuardedSettingClick"/>
+                                                    <TextBlock Style="{StaticResource SettingsRowHint}"
+                                                               Margin="0,7,0,0" MaxWidth="300"
+                                                               HorizontalAlignment="Left"
+                                                               Text="默认关闭（快速校验，收尾毫秒级）。打开后 UC/阿里/迅雷读整个文件核对哈希、夸克做分段抽样复核，更稳妥但大文件收尾要几十秒到几分钟。"/>
+                                                </StackPanel>
+                                            </Grid>
                                         </StackPanel>
                                     </Border>
                                     <!-- ④ 外观 -->

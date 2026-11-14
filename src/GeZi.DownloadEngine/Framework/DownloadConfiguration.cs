@@ -27,6 +27,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private long _minimumSizeOfChunking;
     private bool _reserveStorageSpaceBeforeStartingDownload;
     private bool _trustExpectedHash = true;
+    private bool _quickVerify;
 
     // 不挂空委托：OnPropertyChanged 里已经用 `PropertyChanged?.Invoke(...)` 判空，
     // 再挂一个 `delegate { }` 只会让每次无订阅的赋值都白调一次空方法。
@@ -1102,6 +1103,25 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
         set
         {
             _trustExpectedHash = value;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// 快速校验：下载完成后**不跑全量哈希、不跑网络抽样**，只用「分片覆盖 + 长度」判完整。
+    /// <para>
+    /// 默认 <c>false</c>（保持旧行为）。<c>true</c> 时 <see cref="DownloadService.VerifyContentAsync"/>
+    /// 会跳过 <c>CrossCheckAsync</c>（网络抽样）与 <c>validator.VerifyAsync</c>（全量哈希），
+    /// 只走 <c>VerifyChunkCoverage</c> 这条纯内存毫秒级判据，把收尾校验从分钟/秒级压到毫秒级。
+    /// 「长度不符 → 自动换链」的自愈在 <c>FusionDownloader</c> 外层，不受影响。
+    /// </para>
+    /// </summary>
+    public bool QuickVerify
+    {
+        get => _quickVerify;
+        set
+        {
+            _quickVerify = value;
             OnPropertyChanged();
         }
     }

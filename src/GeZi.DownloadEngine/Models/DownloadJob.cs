@@ -149,6 +149,14 @@ namespace GeZi.DownloadEngine
         public int PanKind { get; set; }
 
         /// <summary>
+        /// 严格校验（下载完成后全量哈希比对）。默认 <c>false</c> = 快速校验
+        /// （四家统一只做「分片覆盖 + 长度校验」，毫秒级，不跑全量哈希、不跑网络抽样）。
+        /// <para>由 UI 层从设置页 <c>Settings.StrictVerify</c> 注入。引擎不认识具体网盘，
+        /// 只把「要不要严格校验」这个布尔透传给 <see cref="FusionDownloader.BuildOptions"/>。</para>
+        /// </summary>
+        public bool StrictVerify { get; set; }
+
+        /// <summary>
         /// 下载数据面的额外请求头（Sec-Ch-Ua / Sec-Fetch-* / Accept-Language 等）。
         /// <para>由 UI 层按 <see cref="PanKind"/> 从 PanClientProfile 生成；
         /// 引擎不认识具体网盘，只负责透传。null = 不追加。</para>

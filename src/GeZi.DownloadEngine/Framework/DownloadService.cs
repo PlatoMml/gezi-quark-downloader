@@ -1824,6 +1824,22 @@ public class DownloadService : AbstractDownloadService
             Md5 = Options.ExpectedMd5,
         };
 
+        // 🚨 快速校验（设置页「严格校验」关闭时）：四家网盘统一只做「分片覆盖 + 长度」。
+        // 不跑全量哈希（UC/阿里/迅雷原来读整个文件，机械盘 110~220 秒）、
+        // 也不跑网络抽样（夸克原来 4 段复核，5~6 秒）→ 收尾校验压到毫秒级。
+        // 「长度不符 → 自动换链」的自愈在 FusionDownloader 外层，这里不受影响。
+        if (Options.QuickVerify)
+        {
+            VerifyOutcome coverage = VerifyChunkCoverage();
+            if (!coverage.Ok)
+            {
+                _logger?.LogWarning("分片覆盖校验未通过：" + coverage.Message);
+                return coverage;
+            }
+            _logger?.LogInfo("快速校验通过（分片覆盖 + 长度完整）：" + coverage.Message);
+            return VerifyOutcome.Skip("快速校验：已按 " + (Package?.Chunks?.Length ?? 0) + " 个分片核对覆盖范围完整（未跑全量哈希与抽样）");
+        }
+
         // 🚨 2026-10-28 补的兜底（原实现这里直接返回 Skip，等于「没哈希就什么都不查」）。
         //
         // 背景：共写模式会**预分配成满尺寸**（`FusionDownloader` 硬编码

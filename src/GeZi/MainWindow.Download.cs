@@ -1057,6 +1057,9 @@ namespace GeZi
                     SlowFloorBps = SlowFloorFor(srcKind),
                     // 2026-11-05：下载数据面按网盘补齐客户端头，与取链身份一致。
                     PanKind = (int)srcKind,
+                    // 🚨 2026-11-14：快速校验开关（设置页「严格校验」默认关）。
+                    //   true = 全量哈希/抽样；false = 只做分片覆盖+长度，收尾毫秒级。
+                    StrictVerify = _settings.StrictVerify,
                     ExtraHeaders = DownloadExtraHeadersFor(srcKind),
                     Threads = i < alloc.Length ? alloc[i] : ThreadsFor(srcKind),
                     Md5 = item.Md5, Sha1 = item.Sha1, Sha256 = item.Sha256,
@@ -1729,6 +1732,8 @@ namespace GeZi
                     SlowFloorBps = SlowFloorFor(srcKind),
                     // 2026-11-05：下载数据面按网盘补齐客户端头，与取链身份一致。
                     PanKind = (int)srcKind,
+                    // 🚨 2026-11-14：快速校验开关（设置页「严格校验」默认关）。
+                    StrictVerify = _settings.StrictVerify,
                     ExtraHeaders = DownloadExtraHeadersFor(srcKind),
                     Threads = i < alloc.Length ? alloc[i] : ThreadsFor(srcKind),
                     Md5 = item.Md5, Sha1 = item.Sha1, Sha256 = item.Sha256,

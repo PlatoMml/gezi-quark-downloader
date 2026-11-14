@@ -682,6 +682,10 @@ namespace GeZi.DownloadEngine
                 //   判据本身抽到 Core 的 DownloadSizing.TrustsExpectedHash，
                 //   这样自检能直接断言、运行期与自检永远不会漂移。
                 TrustExpectedHash = GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(job.PanKind),
+                // 🚨 快速校验（设置页「严格校验」默认关）：
+                //   QuickVerify=true → 下载完成后只做「分片覆盖 + 长度」（毫秒），
+                //   跳过全量哈希与网络抽样；false → 恢复旧行为（夸克抽样、UC/阿里/迅雷全量哈希）。
+                QuickVerify = !job.StrictVerify,
                 SourceKey = job.SourceKey ?? "",
                 ExpectedMd5 = expectedMd5 ?? job.Md5,
                 ExpectedSha1 = expectedSha1 ?? job.Sha1,
