@@ -1572,6 +1572,37 @@ namespace GeZi
         /// 这家网盘在本机有没有可用的凭证（与 RefreshPanCards 的判据保持一致）。
         /// 阿里/迅雷的凭证存在配置里而不是账号档案里，必须单独查。
         /// </summary>
+        /// <summary>
+        /// 取出某家网盘**当前保存在配置里的凭证**（夸克/UC 是 Cookie 串，阿里是 refresh_token，
+        /// 迅雷是 pan_token）。只用于账号列表里判断「哪一行是当前账号」的兜底比对，
+        /// 不做任何网络请求。
+        /// <para>
+        /// 🚨 2026-11-14：账号列表原来统一用 `_client?.CookieStr ?? _settings.Cookie`，
+        /// 那只覆盖夸克。阿里/迅雷下 `_client` 是 null（它们走 `_ownProvider`），
+        /// 于是每一行都拿夸克 Cookie 去比，永远比不中 → 当前账号那一行不高亮。
+        /// </para>
+        /// </summary>
+        private string PanCredentialFor(PanKind kind)
+        {
+            switch (kind)
+            {
+                case PanKind.Uc:
+                    return _settings.UcCookie ?? "";
+                case PanKind.Aliyun:
+                    // 阿里档案里存的是 refresh_token；access_token 是短期的，只作兜底。
+                    return !string.IsNullOrWhiteSpace(_settings.AliyunRefreshToken)
+                        ? _settings.AliyunRefreshToken
+                        : (_settings.AliyunAccessToken ?? "");
+                case PanKind.Xunlei:
+                    return _settings.XunleiPanToken ?? "";
+                default:
+                    return _client != null && !string.IsNullOrEmpty(_client.CookieStr)
+                        ? _client.CookieStr
+                        : (_settings.Cookie ?? "");
+            }
+        }
+
+
         private bool HasPanCredential(PanKind kind)
         {
             switch (kind)

@@ -827,11 +827,27 @@ namespace GeZi
             }
         }
 
-        /// <summary>删除某个账号档案。手动操作专用 —— 程序不会自己删档案。</summary>
-        public static bool Remove(int panKind, string key)
+        /// <summary>
+        /// 删除某个账号档案。手动操作专用 —— 程序不会自己删档案。
+        /// </summary>
+        /// <param name="error">
+        /// 删除失败的具体原因（给界面显示用）；删除成功或本来就没有该档案时为 <c>null</c>。
+        /// <para>
+        /// 🚨 2026-11-14：这里原来是一个裸的 <c>catch { }</c>（把异常全吞掉），
+        /// 界面只能拿到 <c>false</c>，于是写死了一句「账号文件正被占用」——
+        /// 那句提示**没有任何依据**，权限不足/路径非法/磁盘错误全都被它冒充成"被占用"，
+        /// 用户照着提示关掉其他窗口也没用（这就是「无法删除账号」的真实成因）。
+        /// 现在把真实原因带出去。
+        /// </para>
+        /// </param>
+        public static bool Remove(int panKind, string key, out string error)
         {
+            error = null;
             if (string.IsNullOrEmpty(key))
+            {
+                error = "账号标识为空，无法定位要删除的档案。";
                 return false;
+            }
             lock (Locker)
             {
                 bool any = false;
@@ -862,11 +878,57 @@ namespace GeZi
                         }
                     }
                 }
-                catch { }
+                catch (Exception ex)
+                {
+                    // 把真实原因带出去（权限 / 占用 / 路径 / 磁盘），不要吞。
+                    error = DescribeRemoveError(ex);
+                    LogRemoveFailure(panKind, key, ex);
+                }
                 if (any && wasPrimary)
-                    EnsurePrimaryForKind(panKind);
+                {
+                    try { EnsurePrimaryForKind(panKind); }
+                    catch (Exception ex)
+                    {
+                        LogRemoveFailure(panKind, key, ex);
+                        if (string.IsNullOrEmpty(error))
+                            error = "账号已删除，但没能自动指定新的主账号：" + ex.Message;
+                    }
+                }
                 return any;
             }
+        }
+
+        /// <summary>把删除档案时抓到的异常翻译成一句人话（界面直接显示）。</summary>
+        private static string DescribeRemoveError(Exception ex)
+        {
+            if (ex is UnauthorizedAccessException)
+                return "没有权限删除这个文件（可能被系统安全软件保护，或文件是只读的）。";
+            if (ex is System.IO.DirectoryNotFoundException)
+                return "账号档案所在的文件夹已经不存在了。";
+            if (ex is System.IO.PathTooLongException)
+                return "账号档案的路径太长，Windows 无法处理。";
+            if (ex is IOException)
+                return "文件正被占用或磁盘出问题：" + ex.Message;
+            return ex.Message;
+        }
+
+        /// <summary>删除档案失败时留一条日志（写不进日志也不影响主流程）。</summary>
+        private static void LogRemoveFailure(int panKind, string key, Exception ex)
+        {
+            try
+            {
+                string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                    + "  删除账号档案失败 kind=" + panKind + " key=" + key
+                    + " : " + ex.GetType().Name + " - " + ex.Message + Environment.NewLine;
+                var dir = System.IO.Path.GetDirectoryName(ProfilePath(panKind, key));
+                if (!string.IsNullOrEmpty(dir))
+                {
+                    System.IO.Directory.CreateDirectory(dir);
+                    File.AppendAllText(System.IO.Path.Combine(dir, "account-errors.log"), line,
+                        System.Text.Encoding.UTF8);
+                }
+            }
+            catch { }
         }
 
 

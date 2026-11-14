@@ -185,6 +185,8 @@ namespace GeZi
                 try { existing = HistoryStore.GetPending(); }
                 catch { }
                 var createdAtOf = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+                // 同一 Dest 已记录的账号指纹（任务归属一经确定就不再变）
+                var accountTagOf = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 if (existing != null)
                 {
                     foreach (var old in existing)
@@ -192,6 +194,8 @@ namespace GeZi
                         if (old == null || string.IsNullOrEmpty(old.Dest)) continue;
                         if (old.CreatedAtTicks > 0 && !createdAtOf.ContainsKey(old.Dest))
                             createdAtOf[old.Dest] = old.CreatedAtTicks;
+                        if (!string.IsNullOrEmpty(old.AccountTag) && !accountTagOf.ContainsKey(old.Dest))
+                            accountTagOf[old.Dest] = old.AccountTag;
                     }
                 }
                 long nowTicks = DateTime.Now.Ticks;
@@ -264,6 +268,10 @@ namespace GeZi
                             // 2026-11-05：沿用磁盘上的原始创建时刻，只有全新任务才用现在。
                             // ⚠️ 不能用内联 out 声明（老语言版本不支持），先查再取。
                             CreatedAtTicks = CreatedAtFor(createdAtOf, t.Job.Dest, nowTicks),
+                            // 2026-11-14：记下"这条任务属于哪个账号"。
+                            // 同一个 Dest 已有旧记录时**沿用旧 Tag** —— 任务中途换账号不能改归属，
+                            // 否则续传点还在、却已经认不出是谁的下载了。
+                            AccountTag = AccountTagFor(accountTagOf, t.Job.Dest, pi),
                         });
                         if (!string.IsNullOrEmpty(t.Job.Dest))
                             seen.Add(t.Job.Dest);
@@ -347,6 +355,30 @@ namespace GeZi
             if (!string.IsNullOrEmpty(dest) && map.TryGetValue(dest, out born) && born > 0)
                 return born;
             return nowTicks;
+        }
+
+        /// <summary>
+        /// 算出这条任务应当记录的「账号指纹」。
+        /// <para>
+        /// 优先级：① 磁盘上同一 Dest 的旧记录（任务归属不能因为中途换账号而改变）
+        /// → ② 这条任务自己的 <c>PendingInfo</c> 指纹（入队时就确定了）
+        /// → ③ 当前凭证的指纹（兜底，老任务没有前两者的值）。
+        /// </para>
+        /// </summary>
+        private string AccountTagFor(Dictionary<string, string> oldTags, string dest, PendingInfo pi)
+        {
+            string tag;
+            if (!string.IsNullOrEmpty(dest) && oldTags.TryGetValue(dest, out tag) && !string.IsNullOrEmpty(tag))
+                return tag;
+            if (pi != null && !string.IsNullOrEmpty(pi.AccountTag))
+                return pi.AccountTag;
+            try
+            {
+                // 这条任务来自哪家网盘就用哪家的凭证算指纹（不能一律用夸克 Cookie）。
+                PanKind kind = pi != null ? (PanKind)pi.PanKind : _activeKind;
+                return AccountStore.StableCookieFingerprint(PanCredentialFor(kind));
+            }
+            catch { return ""; }
         }
 
 
@@ -1417,6 +1449,15 @@ namespace GeZi
                     allocIdx++;
                     try
                     {
+                        // 🚨🚨 2026-11-14 先校验账号：换账号续传会拿错凭证取链
+                        //   （取不到 / 取到别的账号里的同名文件）。老任务没有 AccountTag，放行。
+                        string accMismatch = CheckAccountMismatch(p);
+                        if (!string.IsNullOrEmpty(accMismatch))
+                        {
+                            Log("[" + (p.Name ?? "?") + "] 跳过续传：" + accMismatch);
+                            skipped.Add(p.Name ?? "?");
+                            continue;
+                        }
                         // 🚨 2026-10-26：取链**必须有超时**。
                         //   原来这里传的是 default(CancellationToken)，而 QuarkSession 的 HttpClient
                         //   是 Timeout.InfiniteTimeSpan —— 网络半死时这个 await 永远不返回，
@@ -1676,6 +1717,8 @@ namespace GeZi
                                 StartFid = p.StartFid, ShareRelDir = p.ShareRelDir,
                                 // 保留来源网盘：否则续传一次就退化成"夸克任务"
                                 PanKind = p.PanKindValue,
+                                // 一并把账号指纹带进运行期任务：再次 SyncPending 时不会丢。
+                                AccountTag = p.AccountTag,
                             },
                         };
                         var captured = job;
@@ -2168,6 +2211,49 @@ namespace GeZi
             // 兜底：配置快照（可能已过期，但总比空着强）。
             if (_settings == null) return "";
             return kind == PanKind.Uc ? (_settings.UcCookie ?? "") : (_settings.Cookie ?? "");
+        }
+
+
+        /// <summary>
+        /// 算出「现在这一家网盘、当前登录的这个账号」的指纹。
+        /// 用于给**新建**任务打账号标记（<see cref="PendingInfo.AccountTag"/>），
+        /// 以及续传前校验「你现在的账号是不是当初下这个文件的账号」。
+        /// </summary>
+        private string ComputeAccountTag(int panKind)
+        {
+            try
+            {
+                var kind = (PanKind)panKind;
+                return AccountStore.StableCookieFingerprint(PanCredentialFor(kind));
+            }
+            catch { return ""; }
+        }
+
+
+        /// <summary>
+        /// 续传前校验账号是否匹配。
+        /// <para>
+        /// 🚨🚨 2026-11-14 修「换了账号还能续传，结果取不到链/下到别人的文件」：
+        /// 续传取链用的是「当前这一家的当前账号」，而任务记录里原来**没有账号信息**，
+        /// 于是拿 A 账号的凭证去取 B 账号的文件。同网盘多账号时必然踩。
+        /// </para>
+        /// <returns>
+        /// 空串 = 可以对账继续；非空 = 一句给人看的拒绝理由。
+        /// </returns>
+        /// </summary>
+        private string CheckAccountMismatch(PendingTask p)
+        {
+            if (p == null) return "";
+            // 老任务没有这个字段 → 不校验（不能把历史任务判死，这是兼容底线）
+            if (string.IsNullOrEmpty(p.AccountTag)) return "";
+            string now = ComputeAccountTag(p.PanKindValue);
+            // 现在算不出指纹（没凭证/凭证残缺）→ 也不拦，交给后面的取链去报真实原因
+            if (string.IsNullOrEmpty(now)) return "";
+            if (string.Equals(now, p.AccountTag, StringComparison.Ordinal)) return "";
+
+            string panName = PanUrlParser.DisplayNameOf((PanKind)p.PanKindValue);
+            return "这条任务是用「另一个 " + panName + " 账号」下载的，当前登录的不是同一个账号。"
+                + "换回原来的账号再试，或者重新下载（进度记录都在，不会从头下）。";
         }
 
 

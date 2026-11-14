@@ -757,6 +757,24 @@ namespace GeZi
         /// </summary>
         [DataMember(Order = 25)] public long CreatedAtTicks { get; set; }
 
+        /// <summary>
+        /// 这条任务属于**哪个账号**（同一家网盘可能有多个账号）。
+        /// <para>
+        /// 🚨🚨 2026-11-14 修「换账号之后续传串号」：
+        /// 原来 25 个字段里只有 <see cref="PanKindValue"/> 记「哪家网盘」，
+        /// **没有任何字段记「哪个账号」**。而续传时取链用的是
+        /// 「当前这一家的当前账号」（<c>PendingDownloadCookie</c>）——
+        /// 于是你换成同网盘的另一个账号去续传旧任务，软件会拿**新账号的凭证**
+        /// 去取旧账号的文件 → 必然取不到，或者更糟：取到了另一个账号里的同名文件。
+        /// </para>
+        /// <para>
+        /// 值是 <c>AccountStore.StableCookieFingerprint(那家网盘的凭证)</c> ——
+        /// 夸克/UC 是 <c>pus:xxx</c>，阿里/迅雷是 <c>dev:xxx</c>（设备号，续期不变）。
+        /// 旧记录缺这个字段 → 空串，此时不校验（保持旧行为，不能把老任务判死）。
+        /// </para>
+        /// </summary>
+        [DataMember(Order = 26)] public string AccountTag { get; set; }
+
         /// <summary>按本地日期返回分组标签。判据只在 Core 的 PendingDateGroup 里有一份。</summary>
         public string DateGroupLabel()
         {

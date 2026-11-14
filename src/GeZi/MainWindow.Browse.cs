@@ -1129,7 +1129,10 @@ namespace GeZi
                 {
                     // 夸克 / UC：走当前登录账号的 QuarkClient（带 keepalive，令牌最新）
                     await _client.DeleteAsync(fids);
-                    try { await _client.PurgeRecycleAsync(fids); } catch { }
+                    // 清空回收站是"锦上添花"：失败不影响删除本身（文件已进回收站），
+                    // 但**不能完全静默** —— 否则用户看到"删了但空间没释放"却查不到原因。
+                    try { await _client.PurgeRecycleAsync(fids); }
+                    catch (Exception pex) { LogDetail("清空回收站没成功（文件已在回收站里，不影响删除）: " + pex.Message); }
                 }
                 else
                 {
@@ -1143,6 +1146,35 @@ namespace GeZi
                 Log("已从网盘删除 " + fids.Count + " 项。");
                 // 🚨 必须 forceRefresh —— 否则读到删除前的缓存，文件看起来还在。
                 await LoadDirAsync(_curFid, forceRefresh: true);
+                // 🚨🚨 2026-11-14 回读校验：删除"成功"不等于"列表里真的没了"。
+                //   迅雷的 batchDelete 只是移入回收站，若列目录没带 trashed 过滤，
+                //   服务端会把已删文件照样发回来 —— 用户看到"删了还在，点下载又取不到直链"。
+                //   这里删完立刻比对一次，把这种"假成功"明确告诉用户，而不是让他自己猜。
+                var stillThere = new List<string>();
+                try
+                {
+                    if (_curDir != null && _curDir.Items != null)
+                    {
+                        var want = new HashSet<string>(fids, StringComparer.Ordinal);
+                        foreach (var it in _curDir.Items)
+                            if (it != null && !string.IsNullOrEmpty(it.Fid) && want.Contains(it.Fid))
+                                stillThere.Add(it.Name);
+                    }
+                }
+                catch { }
+                if (stillThere.Count > 0)
+                {
+                    Log("删除已提交，但列表里仍显示 " + stillThere.Count + " 项："
+                        + string.Join("、", stillThere.Take(5)));
+                    AppDialog.Show(this,
+                        "网盘已受理删除，但列表里还有 " + stillThere.Count + " 项没消失：\n\n"
+                        + string.Join("、", stillThere.Take(5))
+                        + (stillThere.Count > 5 ? " 等" : "") + "\n\n"
+                        + "这些文件多半只是进了网盘的「回收站」，并没有真正删除，"
+                        + "所以还会显示、也取不到直链。可以到网盘网页版清空回收站，"
+                        + "或者稍后点「刷新」再看一次。",
+                        "删除未完全生效", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
                 // 删文件会改变已用空间 —— 顺手把账号卡的容量也刷一下（用户要求）
                 await RefreshCapacityAsync();
             }

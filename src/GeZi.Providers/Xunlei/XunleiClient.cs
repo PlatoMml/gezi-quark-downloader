@@ -886,6 +886,7 @@ namespace GeZi.Providers.Xunlei
 
             var result = new List<QuarkFileEntry>();
             long offset = 0;
+            string pageToken = "";
             // 上限 200 页，防止服务端异常时死循环。
             for (int page = 0; page < 200; page++)
             {
@@ -894,8 +895,17 @@ namespace GeZi.Providers.Xunlei
                 query["parent_id"] = (string.IsNullOrEmpty(parentId) || parentId == "0")
                     ? "" : parentId;
                 query["limit"] = XunleiConstants.PageSize.ToString();
-                query["offset"] = offset.ToString();
                 query["with_audit"] = "true";
+                // 🚨🚨 必须带：不带的话服务端会把**回收站里的文件**也返回，
+                //   于是"删除了还在列表里、点下载又取不到直链"（2026-11-14 修）。
+                query["filters"] = XunleiConstants.NotTrashedFilter;
+
+                // 翻页策略：服务端给了游标就用游标（更稳，目录内容变动时不会漏项/重复），
+                // 没给就退回原来的 offset 累加 —— 两种服务端行为都能正常工作。
+                if (!string.IsNullOrEmpty(pageToken))
+                    query["page_token"] = pageToken;
+                else
+                    query["offset"] = offset.ToString();
 
                 var res = await GetJsonAsync(_apiBase + "/drive/v1/files",
                     query, cancel).ConfigureAwait(false);
@@ -928,8 +938,15 @@ namespace GeZi.Providers.Xunlei
                     });
                 }
 
+                string next = PanJson.AsString(PanJson.Get(res, "next_page_token")) ?? "";
+                if (!string.IsNullOrEmpty(next))
+                {
+                    pageToken = next;       // 有游标 → 下一轮按游标取
+                    continue;
+                }
                 if (files.Length < XunleiConstants.PageSize)
-                    break;
+                    break;                  // 没有游标且不足一页 → 末页
+                pageToken = "";
                 offset += files.Length;
             }
             return result;

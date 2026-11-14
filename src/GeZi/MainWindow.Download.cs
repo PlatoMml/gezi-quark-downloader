@@ -1083,6 +1083,9 @@ namespace GeZi
                         StartFid = item.StartFid, ShareRelDir = item.ShareRelDir,
                         // 来源网盘（0=夸克）：续传时要据此选客户端
                         PanKind = (int)srcKind,
+                        // 🚨 2026-11-14：同时记下"哪个账号"。只有网盘的 kind 不够 ——
+                        //   换成同一家网盘的另一个账号去续传时，会拿新账号的凭证取旧账号的文件。
+                        AccountTag = ComputeAccountTag((int)srcKind),
                     },
                 });
                 // 终态要靠 dest 反查这个条目，才能删掉取链时转存的临时副本。
@@ -1751,6 +1754,8 @@ namespace GeZi
                         // 自动重解析分享的上下文（stoken 过期时换新凭证用）
                         StartFid = item.StartFid, ShareRelDir = item.ShareRelDir,
                         PanKind = (int)srcKind,
+                        // 🚨 2026-11-14：同第一处 —— 记下账号指纹，避免换账号后续传串号。
+                        AccountTag = ComputeAccountTag((int)srcKind),
                         // 🚨 2026-11-03：同第一处 —— 链接与转存 fid 都要落进续传记录。
                         ShareUrl = item.ShareUrl ?? _shareUrl,
                         SavedFid = item.SavedFid,
