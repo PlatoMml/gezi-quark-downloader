@@ -1008,9 +1008,12 @@ namespace GeZi.Providers.Xunlei
 
                 return new PanSpaceInfo { Used = used, Total = total };
             }
-            catch
+            catch (Exception ex)
             {
-                // 容量拿不到不该让账号卡片变成错误页
+                // 容量拿不到不该让账号卡片变成错误页 —— 返回 0 让界面显示"未知"，
+                // 但把原因记进 _lastError（对齐阿里 GetSpaceAsync 的做法），
+                // 用户点「验证登录态」时能看到线索，而不是一脸懵。
+                _lastError = "容量获取失败：" + (ex.Message ?? "");
                 return new PanSpaceInfo();
             }
         }

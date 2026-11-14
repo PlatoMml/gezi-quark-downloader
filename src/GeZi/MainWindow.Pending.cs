@@ -375,8 +375,10 @@ namespace GeZi
             try
             {
                 // 这条任务来自哪家网盘就用哪家的凭证算指纹（不能一律用夸克 Cookie）。
+                // 🚨 走 ComputeAccountTag 而不是直接 StableCookieFingerprint：
+                //   阿里/迅雷要用稳定设备号，不能拿会轮换的 token 当指纹。
                 PanKind kind = pi != null ? (PanKind)pi.PanKind : _activeKind;
-                return AccountStore.StableCookieFingerprint(PanCredentialFor(kind));
+                return ComputeAccountTag((int)kind);
             }
             catch { return ""; }
         }
@@ -2224,6 +2226,32 @@ namespace GeZi
             try
             {
                 var kind = (PanKind)panKind;
+
+                // 🚨🚨 2026-11-14 修「同账号续传被误判成换账号」：
+                //   阿里/迅雷的 access_token / refresh_token 每次续期都会轮换（迅雷
+                //   refresh_token 单次有效、access_token 约 2 小时过期；阿里 access_token
+                //   同样短期）。绝不能拿 token 串当账号指纹 —— 否则同账号每续期一次就换
+                //   一张 token，这里算出的指纹就变一次，CheckAccountMismatch 会把
+                //   「续期后的自己」误判成「换了账号」而拒绝续传，还弹误导文案。
+                //   这两家的稳定标识是**设备号**（账号级固定不变）：
+                //     迅雷 → XunleiWebDeviceId 优先（网页登录时写入，最稳定），
+                //            XunleiDeviceId 兜底（账号登录套）；
+                //     阿里 → AliyunDeviceId（设备签名用，固定）。
+                //   "dev:" 前缀与 StableCookieFingerprint 的 ExtractDeviceId 返回格式一致。
+                if (kind == PanKind.Xunlei)
+                {
+                    string dev = !string.IsNullOrEmpty(_settings.XunleiWebDeviceId)
+                        ? _settings.XunleiWebDeviceId
+                        : (_settings.XunleiDeviceId ?? "");
+                    return string.IsNullOrEmpty(dev) ? "" : "dev:" + dev;
+                }
+                if (kind == PanKind.Aliyun)
+                {
+                    string dev = _settings.AliyunDeviceId ?? "";
+                    return string.IsNullOrEmpty(dev) ? "" : "dev:" + dev;
+                }
+
+                // 夸克/UC：__pus 是长期登录态（不轮换），StableCookieFingerprint 能提取稳定指纹。
                 return AccountStore.StableCookieFingerprint(PanCredentialFor(kind));
             }
             catch { return ""; }

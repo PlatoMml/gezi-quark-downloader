@@ -396,9 +396,12 @@ namespace GeZi
                     }
                     catch { }
                 }
-                catch
+                catch (Exception ex)
                 {
-                    // 档案写失败不影响本次登录
+                    // 档案写失败不影响本次登录，但**必须留痕** ——
+                    // 原来这里是裸 catch 全吞，于是「登录成功但档案没写进去」彻底无据可查，
+                    // 下次启动账号列表里没有这家，用户以为登丢了、只能重登。
+                    LogSaveFailure(panKind, key, ex);
                 }
             }
         }
@@ -915,10 +918,22 @@ namespace GeZi
         /// <summary>删除档案失败时留一条日志（写不进日志也不影响主流程）。</summary>
         private static void LogRemoveFailure(int panKind, string key, Exception ex)
         {
+            WriteAccountErrorLog(panKind, key, "删除", ex);
+        }
+
+        /// <summary>保存档案失败时留一条日志（写不进日志也不影响主流程）。</summary>
+        private static void LogSaveFailure(int panKind, string key, Exception ex)
+        {
+            WriteAccountErrorLog(panKind, key, "保存", ex);
+        }
+
+        /// <summary>把账号档案的增删失败统一写进 account-errors.log（与 LogRemoveFailure 共用）。</summary>
+        private static void WriteAccountErrorLog(int panKind, string key, string action, Exception ex)
+        {
             try
             {
                 string line = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
-                    + "  删除账号档案失败 kind=" + panKind + " key=" + key
+                    + "  " + action + "账号档案失败 kind=" + panKind + " key=" + key
                     + " : " + ex.GetType().Name + " - " + ex.Message + Environment.NewLine;
                 var dir = System.IO.Path.GetDirectoryName(ProfilePath(panKind, key));
                 if (!string.IsNullOrEmpty(dir))
@@ -930,7 +945,6 @@ namespace GeZi
             }
             catch { }
         }
-
 
         /// <summary>把某个档案设为本家网盘的**主账号**（同家其余档案一律取消标记）。</summary>
         public static void SetPrimary(int panKind, string key)

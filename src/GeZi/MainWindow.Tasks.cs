@@ -1746,7 +1746,15 @@ namespace GeZi
                 {
                     QuarkClient c;
                     if (!_quarkCache.TryGetValue(kind, out c) || c == null)
-                        return;
+                    {
+                        // 🚨 2026-11-14 修「容量二次失败」：切网盘时 ActivateCachedPanAsync
+                        //   已把实例从缓存 Remove 出来、挂到 _client 上，所以这里缓存 miss。
+                        //   若这一家恰好是当前激活账号，就退回用 _client，别再直接 return
+                        //   （否则「启动时容量没查到 → 切过去想补查 → 又因缓存 miss 空转」）。
+                        c = (IsLoggedInAny && _activeKind == kind) ? _client : null;
+                        if (c == null)
+                            return;
+                    }
                     var cap = await c.GetCapacityAsync().ConfigureAwait(true);
                     total = cap.total;
                     used = cap.used;
@@ -1755,7 +1763,12 @@ namespace GeZi
                 {
                     IPanProvider p;
                     if (!_providerCache.TryGetValue(kind, out p) || p == null)
-                        return;
+                    {
+                        // 同上：当前激活账号的 provider 挂在 _ownProvider 上，缓存已被 Remove。
+                        p = (IsLoggedInAny && _activeKind == kind) ? _ownProvider : null;
+                        if (p == null)
+                            return;
+                    }
                     var sp = await p.GetSpaceAsync().ConfigureAwait(true);
                     if (sp == null)
                         return;
