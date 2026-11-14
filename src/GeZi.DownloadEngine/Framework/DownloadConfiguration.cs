@@ -26,6 +26,7 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
     private bool _clearPackageOnCompletionWithFailure;
     private long _minimumSizeOfChunking;
     private bool _reserveStorageSpaceBeforeStartingDownload;
+    private bool _trustExpectedHash = true;
 
     // 不挂空委托：OnPropertyChanged 里已经用 `PropertyChanged?.Invoke(...)` 判空，
     // 再挂一个 `delegate { }` 只会让每次无订阅的赋值都白调一次空方法。
@@ -1044,6 +1045,38 @@ public class DownloadConfiguration : ICloneable, INotifyPropertyChanged
         set
         {
             _minimumSizeOfChunking = value;
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>
+    /// 是否信任网盘接口给的哈希，进而跑全量哈希比对。
+    /// <para>
+    /// 🚨 2026-11-14：夸克 / UC 的 <c>md5</c> 字段与真实下发内容不符（2026-10-24 全量逐字节
+    /// 比对已坐实）。对这两个来源跑全量 SHA-256 的结局只有两种，都是白干：
+    /// </para>
+    /// <list type="bullet">
+    /// <item>不一致 → 走抽样复核 → 命中 <c>Md5Untrusted</c> 缓存后按「元数据不可信」放行；</item>
+    /// <item>不一致 → 抽样也拿不到远端样本 → 仍按「元数据问题」放行。</item>
+    /// </list>
+    /// <para>
+    /// 也就是说**结论永远是「文件可用」**，但代价是 22GB 文件白白顺序读一遍
+    /// （托管 SHA-256 约 100~200 MB/s ⇒ 110~220 秒，用户体感就是「卡在 99%」）。
+    /// </para>
+    /// <para>
+    /// 设为 <c>false</c> 时改走两条**不读全文件**的判据：分片覆盖校验（片片写满 + 首尾相接
+    /// + 总长吻合）+ 4 段抽样逐字节复核（只在收尾做，几百毫秒）。
+    /// </para>
+    /// <para>
+    /// ⚠️ 默认 <c>true</c>（保持原行为）。只有确认哈希来源不可信的网盘才置 <c>false</c>。
+    /// </para>
+    /// </summary>
+    public bool TrustExpectedHash
+    {
+        get => _trustExpectedHash;
+        set
+        {
+            _trustExpectedHash = value;
             OnPropertyChanged();
         }
     }

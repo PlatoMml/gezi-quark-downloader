@@ -183,16 +183,32 @@ public sealed class IfRangeValidator : IContentValidator
             algorithm + " 不一致（期望 " + expected + "，实际 " + actual + "）");
     }
 
+    /// <summary>
+    /// 创建哈希实例。
+    /// <para>
+    /// 🚨 2026-11-14：**必须用 CryptoServiceProvider 系列，不能用 <c>SHA256.Create()</c>**。
+    /// </para>
+    /// <para>
+    /// <c>SHA256.Create()</c> 在 .NET Framework 上返回的是 <c>SHA256Managed</c> —— 纯托管实现，
+    /// 单核只有约 100~200 MB/s。22GB 大文件收尾校验要白跑 110~220 秒，用户看起来像「卡在 99%」。
+    /// </para>
+    /// <para>
+    /// <c>SHA256CryptoServiceProvider</c> 走系统 CNG/CAPI，支持 CPU 的 SHA-NI 指令集，
+    /// 实测比托管实现快 3~5 倍。它要求「FIPS 兼容」，而我们这里只做本地文件摘要，
+    /// 不涉及密钥派生，完全满足。算法结果与托管实现**逐位一致**（都是标准 SHA-256），
+    /// 所以不会改变任何校验判定。
+    /// </para>
+    /// </summary>
     private static HashAlgorithm CreateHash(string algorithm)
     {
         switch (algorithm)
         {
             case "SHA-256":
-                return SHA256.Create();
+                return new SHA256CryptoServiceProvider();
             case "SHA-1":
-                return SHA1.Create();
+                return new SHA1CryptoServiceProvider();
             default:
-                return MD5.Create();
+                return new MD5CryptoServiceProvider();
         }
     }
 

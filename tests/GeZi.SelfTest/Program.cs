@@ -2082,6 +2082,42 @@ namespace GeZi.SelfTest
             cfgClamp.TailRefillMinBytes = 1;
             Check("tailslice.config_setter_clamps", cfgClamp.TailRefillMinBytes == 64 * 1024,
                 "小于 64KB 的注入必须被抬回 64KB，实=" + cfgClamp.TailRefillMinBytes);
+
+            // 🚨 2026-11-14：收尾校验的两处改动的护栏。
+            //
+            // ⑦ 哈希可信判定：夸克(0) / UC(1) 的 md5 与真实内容不符，必须跳过全量哈希。
+            //    对它们跑全量 SHA-256 的结论恒为「元数据不可信、文件可用」，
+            //    代价是把整个文件顺序读一遍（22GB ⇒ 110~220 秒，用户体感「卡在 99%」）。
+            Check("trusted_hash.quark_uc_skip",
+                !GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(0)
+                && !GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(1),
+                "夸克(0) / UC(1) 的哈希元数据不可信，必须跳过全量哈希");
+
+            // ⑧ 阿里(2) / 迅雷(3) 的哈希是准的，必须保持「信任」（原行为不变，默认等价）。
+            //    未知值（负数 / 越界）也按可信处理 —— 宁可多跑一次哈希，也不放过真正的损坏。
+            Check("trusted_hash.aliyun_xunlei_keep",
+                GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(2)
+                && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(3)
+                && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(-1)
+                && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(99),
+                "阿里(2) / 迅雷(3) / 未知值必须保持信任，否则会漏掉真正的损坏");
+
+            // ⑨ 内存写缓冲必须有限：以前是 0（=不限）⇒ 写盘跟不上时队列无限增长。
+            Check("membuffer.hdd_bounded",
+                GeZi.Core.Support.DownloadSizing.MemoryBufferBytes(true) == 512L * 1024 * 1024,
+                "机械盘内存缓冲上限必须是 512MB，实="
+                + GeZi.Core.Support.DownloadSizing.MemoryBufferBytes(true));
+
+            // ⑩ 固态盘上限 256MB；且两者都必须远小于「不限」（long.MaxValue）。
+            long ssdBuf = GeZi.Core.Support.DownloadSizing.MemoryBufferBytes(false);
+            Check("membuffer.ssd_bounded",
+                ssdBuf == 256L * 1024 * 1024 && ssdBuf < long.MaxValue / 2,
+                "固态盘内存缓冲上限必须是 256MB 且有限，实=" + ssdBuf);
+
+            // ⑪ 机械盘缓冲必须 ≥ 固态盘（写得更慢，需要更多空间吸收突发）。
+            Check("membuffer.hdd_ge_ssd",
+                GeZi.Core.Support.DownloadSizing.MemoryBufferBytes(true) >= ssdBuf,
+                "机械盘缓冲必须不小于固态盘");
         }
 
 

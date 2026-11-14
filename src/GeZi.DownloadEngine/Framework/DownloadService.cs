@@ -1734,6 +1734,61 @@ public class DownloadService : AbstractDownloadService
             // 覆盖校验通过后仍然交给 validator 跑一遍：
             // 它没有哈希时只会返回 Skip，但保留了「将来网盘开始返回哈希」的升级路径。
         }
+        else if (!Options.TrustExpectedHash)
+        {
+            // 🚨🚨 2026-11-14：哈希来源不可信时**不跑全量哈希**。
+            //
+            // 夸克 / UC 的 md5 字段与真实内容不符（2026-10-24 全量逐字节比对坐实）：
+            //   一次 9.54GB 文件下完后，本地 SHA-256 与服务器逐字节一致，
+            //   但两者都不等于接口声称的 md5。
+            // 于是全量哈希的唯一作用就是「算出一个不符的值 → 触发抽样复核 → 判定元数据不可信
+            // → 放行」。结论恒为「文件可用」，代价却是把整个文件顺序读一遍：
+            //   22GB × 托管 SHA-256（100~200 MB/s）= 110~220 秒，
+            //   用户看到的就是「进度 100% 但一直不结束」。
+            //
+            // 改为两条**不读全文件**的判据：
+            //   ① 分片覆盖校验（片片写满 + 首尾相接 + 总长吻合）；
+            //   ② 4 段抽样逐字节复核（走网络取远端样本，几秒，最多 12 秒预算）。
+            // 这两条合起来比「全量哈希 + 抽样」**判得更严**：全量哈希在元数据不可信时
+            // 根本不产生有效信息，而抽样能真正发现「本地内容与服务器不一致」。
+            VerifyOutcome coverage = VerifyChunkCoverage();
+            if (!coverage.Ok)
+            {
+                _logger?.LogWarning("分片覆盖校验未通过：" + coverage.Message);
+                return coverage;
+            }
+
+            _logger?.LogInfo(string.Format(
+                "跳过全量哈希（该来源的哈希元数据不可信）：{0}；改为抽样复核。", coverage.Message));
+
+            SchedulePhase("正在复核文件内容…");
+            int check;
+            try
+            {
+                check = await CrossCheckAsync(_globalCancellationTokenSource.Token).ConfigureAwait(false);
+            }
+            finally
+            {
+                CancelScheduledPhase();
+                Package.Phase = null;
+            }
+
+            if (check == CrossCheckDamaged)
+            {
+                // 抽样发现本地内容与服务器不一致 —— 这是**真损坏**，必须判失败。
+                return VerifyOutcome.Fail("抽样复核",
+                    "文件内容与服务器不一致（抽样逐字节复核发现差异）。请重新下载。");
+            }
+
+            if (check == CrossCheckMatched && !string.IsNullOrEmpty(_sourceKeyValue))
+            {
+                Md5Untrusted.TryAdd(_sourceKeyValue, 1);
+            }
+
+            return VerifyOutcome.Warn(check == CrossCheckMatched
+                ? "已按服务器返回完整下载（抽样逐字节复核一致）；该网盘接口给的哈希与实际内容不符，属元数据问题，文件可用"
+                : "已按服务器声明的长度下完（抽样复核未能取到远端样本，无法逐字节比对）；该网盘接口给的哈希与实际内容不符，按元数据问题处理，文件可用");
+        }
 
         try
         {

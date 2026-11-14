@@ -574,11 +574,26 @@ namespace GeZi.DownloadEngine
             // 固态盘没有寻道代价，保持默认 64 / 16 MB 即可（省内存）。
             bool hdd = DiskMedia.DetectForPath(job.Dest) == DiskMediaKind.Hdd;
 
+            // 🚨 2026-11-14：给内存写缓冲**设上限**，超了就背压生产端（以前是永不背压）。
+            //
+            // 原实现 MaximumMemoryBufferBytes 保持 0 ⇒ ConcurrentPacketBuffer.BufferSize
+            // 取 long.MaxValue ⇒ StopAddingIfLimitationExceeded 永远不触发 ⇒
+            //   · 写盘跟不上（机械盘 6 MB/s）时队列无限增长，内存一路涨到几 GB；
+            //   · 用户看到的是「卡顿 / 内存暴涨」，严重时 OOM。
+            // 网络 24 MB/s 而机械盘只能写 6 MB/s 时，差额 18 MB/s 全堆在内存里 ——
+            // 100 秒就是 1.8 GB。这不是理论值，是用户实测「越下越卡」的直接来源。
+            //
+            // 设限后表现：队列满 → 生产端（worker 的 TryAdd）等写盘腾出空间 →
+            // 下载速度自动降到磁盘速度。这正是我们想要的（不卡、不 OOM、
+            // 且速度不会假高——进度与磁盘真实写入一致）。
+            long memBufferBytes = GeZi.Core.Support.DownloadSizing.MemoryBufferBytes(hdd);
+
             return new DownloadConfiguration
             {
                 ParallelDownload = true,
                 ChunkCount = eff,
                 ParallelCount = eff,
+                MaximumMemoryBufferBytes = memBufferBytes,
                 // 64 KB 读缓冲：实测 64 KB / 256 KB / 1 MB 三者速度无差别，取中间值减少小包。
                 BufferBlockSize = 64 * 1024,
                 // 必须显式设：bezzad 默认 1000ms，慢一点的连接会被判超时反复重试。
@@ -646,6 +661,21 @@ namespace GeZi.DownloadEngine
                 // 续传加载时与本次任务比对 —— 不一致说明同一路径换了另一个源文件，
                 // 必须整份作废重下（否则拼出「长度对、内容坏」的成品）。
                 // 空串 = 调用方没提供 → 不做这项校验，退回按 TotalBytes 判。
+                // 哈希元数据是否可信（决定收尾跑不跑全量哈希）。
+                //
+                // 🚨🚨 2026-11-14：夸克 / UC 的 md5 与真实内容不符（2026-10-24 全量逐字节
+                //   比对坐实：本地与服务器一致，但都不等于接口声称的 md5）。
+                //   对这两家跑全量 SHA-256 的唯一结果是「算出不符 → 抽样 → 判定元数据不可信
+                //   → 放行」，结论恒为可用，代价是整个文件顺序读一遍：
+                //   22GB × 托管 SHA-256（100~200 MB/s）= 110~220 秒，用户看到「卡在 99%」。
+                //   所以这两家直接 TrustExpectedHash = false，改走
+                //   「分片覆盖校验 + 4 段抽样逐字节复核」，判得更严且不读全文件。
+                //
+                //   阿里 / 迅雷的哈希是准的，保持 true（原行为不变）。
+                //   PanKind 是 int（引擎不认识具体网盘），0 = Quark，1 = Uc。
+                //   判据本身抽到 Core 的 DownloadSizing.TrustsExpectedHash，
+                //   这样自检能直接断言、运行期与自检永远不会漂移。
+                TrustExpectedHash = GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(job.PanKind),
                 SourceKey = job.SourceKey ?? "",
                 ExpectedMd5 = expectedMd5 ?? job.Md5,
                 ExpectedSha1 = expectedSha1 ?? job.Sha1,
