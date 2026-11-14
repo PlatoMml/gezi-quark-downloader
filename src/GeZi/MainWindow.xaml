@@ -2152,18 +2152,27 @@
                                             Margin="0,12,0,0" HorizontalAlignment="Stretch">
                                         <StackPanel>
                                             <Grid Style="{StaticResource SettingsCardHeader}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
                                                 <StackPanel Orientation="Horizontal">
                                                     <Path Data="{StaticResource IconDiagnostics}" Stretch="Uniform"
                                                           Width="16" Height="16" VerticalAlignment="Center"
                                                           Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.7"/>
                                                     <TextBlock Text="风控参谋" Style="{StaticResource SettingsCardTitle}"
                                                                Margin="10,0,0,0"/>
-                                                    <TextBlock Text="被动观察" FontSize="11.5" Margin="8,0,0,0"
-                                                               VerticalAlignment="Center"
-                                                               Foreground="{DynamicResource TextTertiaryBrush}"/>
                                                 </StackPanel>
+                                                <Button Grid.Column="1" x:Name="AdvisorViewButton" Content="查看"
+                                                        MinWidth="72" Height="30" Padding="14,0"
+                                                        HorizontalAlignment="Right"
+                                                        Style="{StaticResource SecondaryButton}"
+                                                        Click="OnAdvisorViewClick"/>
                                             </Grid>
-                                            <StackPanel x:Name="AdvisorBody" Margin="0,4,0,0"/>
+                                            <TextBlock FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                                       Text="被动观察真实下载记录，攒够几次后给出各网盘的安全并发建议。"/>
+                                            <StackPanel x:Name="AdvisorBody" Margin="0,8,0,0" Visibility="Collapsed"/>
                                         </StackPanel>
                                     </Border>
                                     </StackPanel>

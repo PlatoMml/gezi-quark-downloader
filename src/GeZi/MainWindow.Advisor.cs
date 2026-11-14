@@ -40,6 +40,20 @@ namespace GeZi
             PanKind.Quark, PanKind.Uc, PanKind.Aliyun, PanKind.Xunlei,
         };
 
+        /// <summary>点「查看」展开建议，「收起」再折叠。展开时先刷新到最新。</summary>
+        private void OnAdvisorViewClick(object sender, RoutedEventArgs e)
+        {
+            if (AdvisorBody == null) return;
+
+            bool willShow = AdvisorBody.Visibility != Visibility.Visible;
+            if (willShow)
+                RefreshAdvisorCard();
+
+            AdvisorBody.Visibility = willShow ? Visibility.Visible : Visibility.Collapsed;
+            if (AdvisorViewButton != null)
+                AdvisorViewButton.Content = willShow ? "收起" : "查看";
+        }
+
         /// <summary>
         /// 重建「风控参谋」卡片内容。冷启动 / 任务结束 / 设置页打开时调用。
         /// 全程只读 <see cref="AdvisorStore"/>（读是纯读、无锁），不写任何配置。
