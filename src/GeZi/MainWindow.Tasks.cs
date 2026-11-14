@@ -441,6 +441,9 @@ namespace GeZi
                     item.Speed = u.Progress.Speed;
                     // 🚨 2026-11-07：界面显示用 5 秒平滑速度；调度水位仍读 item.Speed。
                     item.DisplaySpeed = u.Progress.DisplaySpeed;
+                    // 风控参谋：维护「本次任务峰值速度」，终态采集时用它当样本值
+                    //（收尾那一帧速度趋近 0，没参考价值）。
+                    item.TrackPeak(u.Progress.DisplaySpeed);
                     item.Done = u.Progress.Done;
                     item.Total = u.Progress.Total;
                 }
@@ -484,6 +487,13 @@ namespace GeZi
                     : u.State == JobState.Failed ? "失败" : "已取消";
                 long sizeBytes = item.Total > 0 ? item.Total : item.Done;
                 HistoryStore.AddHistory(item.Name, Util.FormatSize(sizeBytes), item.Job.Dest, status);
+
+                // ---- 风控参谋：任务结束采集一条被动样本（只观察，不主动探测）----
+                // 判据：只有「真正跑起来过」的任务才记 —— 刚点下载就取消/失败、
+                // 或根本没启动 worker 的任务，没有并发/速度数据，记进去只会污染参谋。
+                // 完成后 worker 会被释放、WorkerCount 可能已归 0，但 OnDiagnostics 每 5 秒
+                // 喂一次、终态前的最后一帧已把它钉在 item 上，这里取到的就是真实并发上限。
+                RecordAdvisorSample(item, u.State == JobState.Completed);
 
                 // 阿里 / 迅雷分享取链前必须转存一份到自己网盘，下载结束要删掉，
                 // 否则用户网盘里会堆满垃圾。**只能等终态删**：下载中途删会让 CDN 回源 503。
@@ -2157,6 +2167,42 @@ namespace GeZi
                 }), System.Windows.Threading.DispatcherPriority.Background);
             }
             catch { _emptyStatePending = false; }
+        }
+
+
+        // ---------------- 风控参谋：任务结束采集 ----------------
+        // 只观察、不主动探测：每次真实下载任务结束后记一笔「网盘 + 实际线程 + 峰值速度 +
+        // 是否停滞」，攒够 AdvisorEngine.MinSamples 条后卡片才给建议。数据全部来自任务
+        // 生命周期里已经发生的事实（OnDiagnostics 每 5 秒喂一次的 WorkerCount/Stalled），
+        // 不向服务器多发一个请求，零风控风险。
+
+        /// <summary>
+        /// 在任务终态帧调用一次，把 <paramref name="item"/> 的最终观测写进
+        /// <c>AdvisorStore</c>。刚点下载就取消/失败、根本没跑起来过的任务（
+        /// WorkerCount 与峰值速度都是 0）跳过，避免污染参谋。
+        /// </summary>
+        private void RecordAdvisorSample(TaskItem item, bool completed)
+        {
+            try
+            {
+                if (item == null || item.Job == null || item.Job.Pending == null) return;
+                // 没真正跑起来（没启动 worker、没产生速度）的样本没有参考价值。
+                if (item.WorkerCount <= 0 && item.PeakBps <= 0) return;
+
+                var sample = new AdvisorSample
+                {
+                    PanKind = item.Job.Pending.PanKind,
+                    Threads = item.WorkerCount,
+                    PeakBps = (long)item.PeakBps,
+                    Stalled = item.StalledOnce,
+                    Completed = completed,
+                    TimeTicks = DateTime.UtcNow.Ticks,
+                };
+                AdvisorStore.RecordSample(sample);
+                // 样本变了 → 若设置页开着，刷新参谋卡片；没开着时 AdvisorBody 为 null，天然跳过。
+                RefreshAdvisorCard();
+            }
+            catch { }
         }
     }
 }

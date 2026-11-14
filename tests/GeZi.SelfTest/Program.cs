@@ -144,6 +144,7 @@ namespace GeZi.SelfTest
         Run("pending_canresume", TestPendingCanResume);
         Run("retry_policy", TestRetryPolicy);
         Run("verify_multi_algorithm", TestVerifyMultiAlgorithm);
+        Run("advisor_engine", TestAdvisorEngine);
             }
             catch (Exception ex)
             {
@@ -3821,6 +3822,111 @@ namespace GeZi.SelfTest
             }
             Check("range.real_downgrade_detected", hit,
                 "同一秒内 50 条连接全回 200 必须被识别为真降级");
+        }
+
+        private static void TestAdvisorEngine()
+        {
+            long now = DateTime.UtcNow.Ticks;
+            long day = TimeSpan.TicksPerDay;
+
+            // ① 样本不足（< MinSamples=3）→ Ready=false，其余字段全 0。
+            var few = new List<AdvisorSample>
+            {
+                S(0, 64, 10_000_000, false, true, now),
+                S(0, 96, 15_000_000, false, true, now),
+            };
+            var vFew = AdvisorEngine.Advise(few, now);
+            Check("advisor.insufficient_not_ready", !vFew.Ready && vFew.SampleCount == 2,
+                "2 条样本不应参谋，Ready 应 false，实际 SampleCount=" + vFew.SampleCount);
+            Check("advisor.insufficient_zero_suggestion",
+                vFew.SuggestMax == 0 && vFew.SuggestMin == 0 && vFew.RedLine == 0,
+                "样本不足时建议与红线都应归零");
+
+            // ② 红线 = 出现停滞的最小并发档；推荐 = 无停滞且完成里峰值最高档。
+            var basic = new List<AdvisorSample>
+            {
+                S(0, 64,  20_000_000, false, true,  now),
+                S(0, 96,  15_000_000, false, true,  now),
+                S(0, 128, 30_000_000, true,  false, now),
+            };
+            var vBasic = AdvisorEngine.Advise(basic, now);
+            Check("advisor.redline_min_stalled", vBasic.RedLine == 128,
+                "128 档停滞，红线应为 128，实际=" + vBasic.RedLine);
+            Check("advisor.suggest_highest_peak", vBasic.SuggestMax == 64,
+                "安全完成档里峰值最高是 64(20MB)，实际建议=" + vBasic.SuggestMax);
+            Check("advisor.suggest_min_floor", vBasic.SuggestMin == Math.Max(AdvisorEngine.FloorThreads, 64 / 2),
+                "建议下限应为 max(16, 32)=32，实际=" + vBasic.SuggestMin);
+
+            // ③ 无停滞时，推荐 = 峰值最高的完成档（96 档 20MB 最高）。
+            var clean = new List<AdvisorSample>
+            {
+                S(0, 64,  10_000_000, false, true, now),
+                S(0, 96,  20_000_000, false, true, now),
+                S(0, 128, 15_000_000, false, true, now),
+            };
+            var vClean = AdvisorEngine.Advise(clean, now);
+            Check("advisor.no_stall_highest_peak", vClean.SuggestMax == 96 && vClean.RedLine == 0,
+                "无停滞时建议应为峰值最高档 96，红线 0，实际建议=" + vClean.SuggestMax + " 红线=" + vClean.RedLine);
+
+            // ④ 推荐档触碰/越过红线 → 压到红线之下。
+            var clamp = new List<AdvisorSample>
+            {
+                S(0, 64,  10_000_000, false, true,  now),
+                S(0, 128, 20_000_000, true,  false, now),
+                S(0, 256, 50_000_000, false, true,  now),
+            };
+            var vClamp = AdvisorEngine.Advise(clamp, now);
+            Check("advisor.clamp_below_redline", vClamp.RedLine == 128 && vClamp.SuggestMax == 64,
+                "256 档峰值最高但触碰红线 128，应压到 64，实际建议=" + vClamp.SuggestMax + " 红线=" + vClamp.RedLine);
+
+            // ⑤ 全停滞（无安全样本）→ 建议降到红线一半以下。
+            var allStalled = new List<AdvisorSample>
+            {
+                S(0, 128, 20_000_000, true, false, now),
+                S(0, 256, 25_000_000, true, false, now),
+                S(0, 512, 30_000_000, true, false, now),
+            };
+            var vAll = AdvisorEngine.Advise(allStalled, now);
+            Check("advisor.all_stalled_fallback", vAll.RedLine == 128 && vAll.SuggestMax == Math.Max(AdvisorEngine.FloorThreads, 128 / 2),
+                "全停滞时红线=128，建议应=max(16,64)=64，实际=" + vAll.SuggestMax);
+
+            // ⑥ 保质期：超过 MaxDays 的样本在 AdviseFor 里被丢弃。
+            var expired = new List<AdvisorSample>
+            {
+                S(0, 64, 50_000_000, false, true, now - 40L * day),
+                S(0, 64, 10_000_000, false, true, now),
+                S(0, 64, 12_000_000, false, true, now),
+            };
+            var vExpired = AdvisorEngine.AdviseFor(expired, 0, now);
+            Check("advisor.expired_dropped", vExpired.SampleCount == 2 && !vExpired.Ready,
+                "40 天前的样本应被丢弃，剩 2 条不足 3，实际 SampleCount=" + vExpired.SampleCount);
+
+            // ⑦ AdviseFor 按网盘过滤：别家网盘的停滞不应影响本家红线。
+            var mixed = new List<AdvisorSample>
+            {
+                S(0, 64,  10_000_000, false, true, now),
+                S(0, 96,  15_000_000, false, true, now),
+                S(0, 128, 20_000_000, false, true, now),
+                S(1, 512, 99_000_000, true,  false, now),
+            };
+            var vMixed = AdvisorEngine.AdviseFor(mixed, 0, now);
+            Check("advisor.filter_by_pan", vMixed.SampleCount == 3 && vMixed.Ready,
+                "只应统计夸克(0)的 3 条，实际 SampleCount=" + vMixed.SampleCount);
+            Check("advisor.filter_ignores_other_pan", vMixed.RedLine == 0,
+                "UC(1) 的停滞不应进入夸克红线，实际红线=" + vMixed.RedLine);
+        }
+
+        private static AdvisorSample S(int panKind, int threads, long peakBps, bool stalled, bool completed, long ticks)
+        {
+            return new AdvisorSample
+            {
+                PanKind = panKind,
+                Threads = threads,
+                PeakBps = peakBps,
+                Stalled = stalled,
+                Completed = completed,
+                TimeTicks = ticks,
+            };
         }
 
         private static string Short(string s, int max = 12)

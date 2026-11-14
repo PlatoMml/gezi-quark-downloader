@@ -2052,9 +2052,9 @@
                                          🚨 2026-11-03：原来它横跨两列占满整行、内容只有一行，
                                          下方大片空白。现在放进右列第三行，与左列「存储」对齐，
                                          两列高度自然一致，整页也不需要滚动条了。 -->
-                                    <Border Grid.Row="1" Style="{StaticResource SettingsCard}"
-                                            Margin="0" HorizontalAlignment="Stretch"
-                                            VerticalAlignment="Top">
+                                    <StackPanel Grid.Row="1" VerticalAlignment="Top">
+                                    <Border Style="{StaticResource SettingsCard}"
+                                            Margin="0" HorizontalAlignment="Stretch">
                                         <!-- 🚨 2026-11-14：去掉 VerticalAlignment=Stretch 和 MinHeight=132。
                                              本卡在左列 Row 1（Height=*）里，Stretch 会把它撑到吃满剩余空间，
                                              而内容只有 120px 左右 → 卡片内部下方一大片空白（用户截图指出的问题）。
@@ -2143,6 +2143,30 @@
                                                        Text="VLC 免费开源、几乎什么格式都能播；用它边下边播，没下完也能看已缓存的部分。没装 VLC 时用系统默认播放器打开。"/>
                                         </StackPanel>
                                     </Border>
+
+                                    <!-- ⑥ 风控参谋：被动采集真实下载记录，攒够样本后给建议。
+                                         只观察、不主动探测 —— 每次任务结束后记一笔「网盘+线程+峰值速度+是否停滞」，
+                                         攒够 3 次才参谋。内容由代码端 RefreshAdvisorCard() 填充，
+                                         冷启动时显示磁盘介质兜底，不留大片空白。 -->
+                                    <Border Style="{StaticResource SettingsCard}"
+                                            Margin="0,12,0,0" HorizontalAlignment="Stretch">
+                                        <StackPanel>
+                                            <Grid Style="{StaticResource SettingsCardHeader}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Path Data="{StaticResource IconDiagnostics}" Stretch="Uniform"
+                                                          Width="16" Height="16" VerticalAlignment="Center"
+                                                          Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.7"/>
+                                                    <TextBlock Text="风控参谋" Style="{StaticResource SettingsCardTitle}"
+                                                               Margin="10,0,0,0"/>
+                                                    <TextBlock Text="被动观察" FontSize="11.5" Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="{DynamicResource TextTertiaryBrush}"/>
+                                                </StackPanel>
+                                            </Grid>
+                                            <StackPanel x:Name="AdvisorBody" Margin="0,4,0,0"/>
+                                        </StackPanel>
+                                    </Border>
+                                    </StackPanel>
                                     </Grid>
 
                                     <!-- ==================== 右列 ==================== -->
