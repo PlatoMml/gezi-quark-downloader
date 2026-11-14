@@ -396,8 +396,6 @@ namespace GeZi
             ShellLaunch.Log = Log;
             // 探测本机播放器，供设置页展示 + 「打开」按钮选用
             RefreshPlayerStatus();
-            // 风控参谋卡片（冷启动兜底显示磁盘介质；有样本时显示各网盘建议）
-            RefreshAdvisorCard();
         }
 
 

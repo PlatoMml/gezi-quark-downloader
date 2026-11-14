@@ -2199,8 +2199,7 @@ namespace GeZi
                     TimeTicks = DateTime.UtcNow.Ticks,
                 };
                 AdvisorStore.RecordSample(sample);
-                // 样本变了 → 若设置页开着，刷新参谋卡片；没开着时 AdvisorBody 为 null，天然跳过。
-                RefreshAdvisorCard();
+                // 样本只是落盘，卡片/弹窗在用户点「查看」时才实时取，无需在此刷新。
             }
             catch { }
         }

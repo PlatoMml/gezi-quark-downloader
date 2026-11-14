@@ -40,61 +40,92 @@ namespace GeZi
             PanKind.Quark, PanKind.Uc, PanKind.Aliyun, PanKind.Xunlei,
         };
 
-        /// <summary>点「查看」展开建议，「收起」再折叠。展开时先刷新到最新。</summary>
+        /// <summary>
+        /// 点「查看」弹出小窗口展示各网盘建议（用户 m17843：改为弹窗，而非卡片内展开）。
+        /// 数据在打开那一刻实时取（AdvisorStore 读是纯读、无锁），不缓存。
+        /// 标题由 <see cref="DialogChrome.StyleWindow"/> 画在自绘标题栏里，内容区不再重复大标题。
+        /// </summary>
         private void OnAdvisorViewClick(object sender, RoutedEventArgs e)
         {
-            if (AdvisorBody == null) return;
+            try
+            {
+                var dlg = new Window
+                {
+                    Owner = this,
+                    Title = "风控参谋",
+                    ResizeMode = ResizeMode.NoResize,
+                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                };
+                DialogChrome.StyleWindow(dlg, 500, 430);
 
-            bool willShow = AdvisorBody.Visibility != Visibility.Visible;
-            if (willShow)
-                RefreshAdvisorCard();
+                var root = DialogChrome.DialogRoot();
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                    // 磁盘介质说明
+                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 建议列表（可滚动）
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                    // 关闭按钮
 
-            AdvisorBody.Visibility = willShow ? Visibility.Visible : Visibility.Collapsed;
-            if (AdvisorViewButton != null)
-                AdvisorViewButton.Content = willShow ? "收起" : "查看";
+                var disk = DialogChrome.Hint(DiskMediaText(_settings?.OutDir), 0, 12);
+                Grid.SetRow(disk, 0);
+                root.Children.Add(disk);
+
+                var lines = new StackPanel();
+                FillAdvisorLines(lines);
+                var scroll = new ScrollViewer
+                {
+                    Content = lines,
+                    VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                    HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
+                };
+                var card = DialogChrome.Card(scroll);
+                Grid.SetRow(card, 1);
+                root.Children.Add(card);
+
+                var closeBtn = DialogChrome.PrimaryButton("关闭");
+                closeBtn.MinWidth = 96;
+                closeBtn.Click += (s2, e2) => dlg.Close();
+                var btns = DialogChrome.ButtonRow(closeBtn);
+                btns.Margin = new Thickness(0, 14, 0, 0);
+                Grid.SetRow(btns, 2);
+                root.Children.Add(btns);
+
+                dlg.Content = root;
+                dlg.ShowDialog();
+            }
+            catch { }
         }
 
         /// <summary>
-        /// 重建「风控参谋」卡片内容。冷启动 / 任务结束 / 设置页打开时调用。
+        /// 把各网盘建议填进 <paramref name="target"/>：冷启动（无样本）给一行提示，
+        /// 攒够样本按网盘列建议，一家都没攒够则底部补一句。弹窗内容由此生成。
         /// 全程只读 <see cref="AdvisorStore"/>（读是纯读、无锁），不写任何配置。
         /// </summary>
-        private void RefreshAdvisorCard()
+        private void FillAdvisorLines(Panel target)
         {
-            if (AdvisorBody == null) return;
-            AdvisorBody.Children.Clear();
+            var samples = AdvisorStore.GetAll();
+            long now = DateTime.UtcNow.Ticks;
 
-            try
+            // ① 冷启动：一条样本都没有 → 不给建议。
+            if (samples.Count == 0)
             {
-                var samples = AdvisorStore.GetAll();
-                long now = DateTime.UtcNow.Ticks;
-
-                // ① 冷启动：一条样本都没有 → 只显示磁盘介质兜底，不瞎给建议。
-                if (samples.Count == 0)
-                {
-                    AdvisorBody.Children.Add(BuildAdvisorHint(
-                        DiskMediaText(_settings?.OutDir), 0));
-                    AdvisorBody.Children.Add(BuildAdvisorHint(
-                        "完成几次真实下载后，这里会根据记录给出各网盘的并发建议。", 8));
-                    return;
-                }
-
-                bool anyReady = false;
-                foreach (var kind in AdvisorPanOrder)
-                {
-                    var verdict = AdvisorEngine.AdviseFor(samples, (int)kind, now);
-                    if (verdict.SampleCount <= 0) continue;
-                    if (verdict.Ready) anyReady = true;
-                    AdvisorBody.Children.Add(BuildAdvisorRow(kind, verdict));
-                }
-
-                // 兜底：有样本但没一家攒够 3 次，底部补一句提示（不是大片空白，是一行说明）。
-                if (!anyReady)
-                {
-                    AdvisorBody.Children.Add(BuildAdvisorHint(
-                        "每完成 3 次下载，就能给出一家网盘的并发建议。", 10));
-                }
+                target.Children.Add(BuildAdvisorHint(
+                    "完成几次真实下载后，这里会根据记录给出各网盘的并发建议。", 0));
+                return;
             }
-            catch { }
+
+            bool anyReady = false;
+            foreach (var kind in AdvisorPanOrder)
+            {
+                var verdict = AdvisorEngine.AdviseFor(samples, (int)kind, now);
+                if (verdict.SampleCount <= 0) continue;
+                if (verdict.Ready) anyReady = true;
+                target.Children.Add(BuildAdvisorRow(kind, verdict));
+            }
+
+            // 有样本但没一家攒够 3 次，底部补一句提示。
+            if (!anyReady)
+            {
+                target.Children.Add(BuildAdvisorHint(
+                    "每完成 3 次下载，就能给出一家网盘的并发建议。", 10));
+            }
         }
 
         /// <summary>一行「网盘 + 结论」。结论文字由参谋结果拼，颜色走主题资源。</summary>

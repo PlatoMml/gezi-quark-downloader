@@ -2172,7 +2172,6 @@
                                             <TextBlock FontSize="12" TextWrapping="Wrap"
                                                        Foreground="{DynamicResource TextTertiaryBrush}"
                                                        Text="被动观察真实下载记录，攒够几次后给出各网盘的安全并发建议。"/>
-                                            <StackPanel x:Name="AdvisorBody" Margin="0,8,0,0" Visibility="Collapsed"/>
                                         </StackPanel>
                                     </Border>
                                     </StackPanel>
