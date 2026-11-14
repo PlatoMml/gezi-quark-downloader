@@ -2054,12 +2054,11 @@
                                          两列高度自然一致，整页也不需要滚动条了。 -->
                                     <Border Grid.Row="1" Style="{StaticResource SettingsCard}"
                                             Margin="0" HorizontalAlignment="Stretch"
-                                            VerticalAlignment="Stretch"
-                                            MinHeight="132">
-                                        <!-- 🚨 2026-11-07 MinHeight="132" 是「加字把卡片顶大」的硬保护：
-                                             本卡高度 = 外层行高 H − (存储 + 外观)，H = max(左右列自然高)。
-                                             一旦文案再变长让右列反超左列，本卡会退回自然高 → 变大且左列短一截。
-                                             132 = 设计高度，超了宁可裁切也不要整卡撑开（见下方文案处的长注释）。 -->
+                                            VerticalAlignment="Top">
+                                        <!-- 🚨 2026-11-14：去掉 VerticalAlignment=Stretch 和 MinHeight=132。
+                                             本卡在左列 Row 1（Height=*）里，Stretch 会把它撑到吃满剩余空间，
+                                             而内容只有 120px 左右 → 卡片内部下方一大片空白（用户截图指出的问题）。
+                                             改成 Top 让卡片按内容高度收缩，空白落在卡片外而不是卡片内。 -->
                                         <StackPanel>
                                             <!-- 标题行（与其它卡一致的图标+标题） -->
                                             <Grid Style="{StaticResource SettingsCardHeader}">
@@ -2229,7 +2228,7 @@
                                                     <CheckBox x:Name="AutoCleanCheck"
                                                               Content="下载完成后自动清理云盘转存文件"
                                                               Style="{StaticResource AppCheckBox}"
-                                                              VerticalAlignment="Center"
+                                                              Margin="0,8,0,0"
                                                               Click="OnGuardedSettingClick"/>
                                                     <TextBlock Style="{StaticResource SettingsRowHint}"
                                                                Margin="0,7,0,0" MaxWidth="300"
@@ -2249,12 +2248,12 @@
                                                     <CheckBox x:Name="StrictVerifyCheck"
                                                               Content="下载完成后全量哈希校验"
                                                               Style="{StaticResource AppCheckBox}"
-                                                              VerticalAlignment="Center"
+                                                              Margin="0,8,0,0"
                                                               Click="OnGuardedSettingClick"/>
                                                     <TextBlock Style="{StaticResource SettingsRowHint}"
                                                                Margin="0,7,0,0" MaxWidth="300"
                                                                HorizontalAlignment="Left"
-                                                               Text="默认关闭（快速校验，收尾毫秒级）。打开后 UC/阿里/迅雷读整个文件核对哈希、夸克做分段抽样复核，更稳妥但大文件收尾要几十秒到几分钟。"/>
+                                                               Text="开启后将进行严格校验。"/>
                                                 </StackPanel>
                                             </Grid>
                                         </StackPanel>

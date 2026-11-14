@@ -160,7 +160,10 @@ namespace GeZi
             {
                 if (!IsLoggedInAny)
                 {
-                    Log("网盘模式需要先登录");
+                    // 2026-11-14：原来只往日志写一行「网盘模式需要先登录」，
+                    // 界面毫无反应（日志在下方不起眼），用户以为程序坏了。
+                    // 改成弹框提示 + 引导去登录页（复用下载入口那套 RequireLogin）。
+                    RequireLogin("浏览我的网盘");
                     return;
                 }
                 await LoadDirAsync("0");
@@ -1096,7 +1099,7 @@ namespace GeZi
 
         private async void OnDeleteCloudSelected(object sender, RoutedEventArgs e)
         {
-            if (!IsLoggedInAny) { Log("请先登录"); return; }
+            if (!IsLoggedInAny) { RequireLogin("删除网盘文件"); return; }
             if (ShareMode) { Log("「删除网盘文件」只在「我的网盘」模式下可用（分享里的文件属于分享者）"); return; }
 
             var selected = FileList.SelectedItems.Cast<ShareFileItem>().ToList();
