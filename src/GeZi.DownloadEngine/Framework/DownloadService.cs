@@ -1738,9 +1738,12 @@ public class DownloadService : AbstractDownloadService
         {
             // 🚨🚨 2026-11-14：哈希来源不可信时**不跑全量哈希**。
             //
-            // 夸克 / UC 的 md5 字段与真实内容不符（2026-10-24 全量逐字节比对坐实）：
+            // 目前只有夸克的 md5 字段与真实内容不符（2026-10-24 全量逐字节比对坐实）：
             //   一次 9.54GB 文件下完后，本地 SHA-256 与服务器逐字节一致，
             //   但两者都不等于接口声称的 md5。
+            // （UC 曾被一并划进来，理由只是「同协议族」—— 2026-11-14 复查发现那条证据
+            //   其实是夸克的，UC 从未做过同等实测；日志里 UC 反而出现过「MD5 校验通过」。
+            //   已按 AGENTS.md 一·6 / 一·8 把 UC 移出名单，见 DownloadSizing.TrustsExpectedHash。）
             // 于是全量哈希的唯一作用就是「算出一个不符的值 → 触发抽样复核 → 判定元数据不可信
             // → 放行」。结论恒为「文件可用」，代价却是把整个文件顺序读一遍：
             //   22GB × 托管 SHA-256（100~200 MB/s）= 110~220 秒，
@@ -1785,9 +1788,21 @@ public class DownloadService : AbstractDownloadService
                 Md5Untrusted.TryAdd(_sourceKeyValue, 1);
             }
 
-            return VerifyOutcome.Warn(check == CrossCheckMatched
-                ? "已按服务器返回完整下载（抽样逐字节复核一致）；该网盘接口给的哈希与实际内容不符，属元数据问题，文件可用"
-                : "已按服务器声明的长度下完（抽样复核未能取到远端样本，无法逐字节比对）；该网盘接口给的哈希与实际内容不符，按元数据问题处理，文件可用");
+            // 🚨 必须返回 Skip 而不是 Warn。
+            //
+            // 上面的 CrossCheckAsync 已经把「抽样逐字节复核」跑完了，结论已经定了：
+            // 有差异 → 上一行已经返回 Fail；没差异 / 没取到 → 到这里。
+            // 若这里返回 Warn（HashMismatch = true），外层 StartDownload 的
+            // `if (verify.HashMismatch)` 会**再跑一遍 CrossCheckAsync** ——
+            // 又花最多 12 秒、又占用带宽，而且 CrossCheckUnverified 时不写 Md5Untrusted 缓存，
+            // 所以第二次必然也不会被缓存短路，是纯粹的重跑。
+            // Skip 的语义（HashMismatch = false, Skipped = true）正好表达
+            // 「本次没有做全量哈希校验，但已经在函数内判定完毕」。
+            return VerifyOutcome.Skip(check == CrossCheckMatched
+                ? "跳过全量哈希（该网盘接口给的哈希与实际内容不符，属元数据问题）；"
+                  + "已按服务器返回完整下载，抽样逐字节复核一致，文件可用"
+                : "跳过全量哈希（该网盘接口给的哈希与实际内容不符，属元数据问题）；"
+                  + "已按服务器声明的长度下完，抽样复核未能取到远端样本，无法逐字节比对，文件可用");
         }
 
         try

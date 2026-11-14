@@ -2085,22 +2085,26 @@ namespace GeZi.SelfTest
 
             // 🚨 2026-11-14：收尾校验的两处改动的护栏。
             //
-            // ⑦ 哈希可信判定：夸克(0) / UC(1) 的 md5 与真实内容不符，必须跳过全量哈希。
-            //    对它们跑全量 SHA-256 的结论恒为「元数据不可信、文件可用」，
+            // ⑦ 哈希可信判定：只有夸克(0) 的 md5 与真实内容不符，必须跳过全量哈希。
+            //    对它跑全量 SHA-256 的结论恒为「元数据不可信、文件可用」，
             //    代价是把整个文件顺序读一遍（22GB ⇒ 110~220 秒，用户体感「卡在 99%」）。
-            Check("trusted_hash.quark_uc_skip",
-                !GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(0)
-                && !GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(1),
-                "夸克(0) / UC(1) 的哈希元数据不可信，必须跳过全量哈希");
+            Check("trusted_hash.quark_skip",
+                !GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(0),
+                "夸克(0) 的哈希元数据不可信，必须跳过全量哈希");
 
-            // ⑧ 阿里(2) / 迅雷(3) 的哈希是准的，必须保持「信任」（原行为不变，默认等价）。
-            //    未知值（负数 / 越界）也按可信处理 —— 宁可多跑一次哈希，也不放过真正的损坏。
-            Check("trusted_hash.aliyun_xunlei_keep",
-                GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(2)
+            // ⑧ 其余三家 + 未知值都必须「信任」（原行为不变，默认等价）。
+            //
+            // 🚨 2026-11-14 实测修正：UC(1) 曾经被划进跳过名单，理由只是「和夸克同协议族」——
+            //    但记忆里那份全量比对证据（api md5 1c7741… vs local md5 745515…）是**夸克**的，
+            //    UC 从来没过做同等实测；反而日志里出现过「内容校验：MD5 校验通过」。
+            //    拿推断当事实违背 AGENTS.md 一·6 / 一·8，故 UC 恢复信任。
+            Check("trusted_hash.others_keep",
+                GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(1)
+                && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(2)
                 && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(3)
                 && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(-1)
                 && GeZi.Core.Support.DownloadSizing.TrustsExpectedHash(99),
-                "阿里(2) / 迅雷(3) / 未知值必须保持信任，否则会漏掉真正的损坏");
+                "UC(1) / 阿里(2) / 迅雷(3) / 未知值必须保持信任，否则会漏掉真正的损坏");
 
             // ⑨ 内存写缓冲必须有限：以前是 0（=不限）⇒ 写盘跟不上时队列无限增长。
             Check("membuffer.hdd_bounded",
