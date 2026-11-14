@@ -539,6 +539,17 @@ internal class ChunkDownloader
             throw; // throw origin stack trace of exception 
         }
 
+        // 🚨🚨 2026-11-14 修「结尾卡 99%」兜底：
+        //   循环因 readSize==0（读到 EOF）退出时，若分片还没下满，说明服务端提前关闭了
+        //   连接但没抛异常（短读）。必须转成可重试异常让 Download() 重连续传，
+        //   绝不能静默返回半个 chunk（半个 chunk 脱离队列会让 worker 空转死锁）。
+        //   ⚠️ 被抢占切分的原片 End 已缩小、Position 已夹到新 Length，IsDownloadCompleted()
+        //      为 true，不会走到这；只有「真没下满且没被切分」才触发。
+        //   ⚠️ 消息含「连接已关闭」命中 IsTransportIo，走可重试路径不判死。
+        if (!Chunk.IsDownloadCompleted())
+            throw new IOException(
+                $"连接已关闭（分片 {Chunk.Id} 读到 EOF 但未下满，已下 {Chunk.Position}/{Chunk.Length} 字节）");
+
         _logger?.LogDebug($"分片 {Chunk.Id} 数据流读取完成");
     }
 

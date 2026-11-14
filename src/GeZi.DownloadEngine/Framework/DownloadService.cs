@@ -2427,6 +2427,15 @@ public class DownloadService : AbstractDownloadService
                         Interlocked.Decrement(ref _liveWorkers);
                         Chunk ignored;
                         active.TryRemove(chunk.Id, out ignored);
+
+                        // 🚨🚨 2026-11-14 修「结尾卡 99%、重启续传才恢复」的根治：
+                        //   正常路径返回但分片没下满时，必须把它放回队列。否则它会
+                        //   「不在 queue、不在 active、IsDownloadCompleted()==false」，
+                        //   让 AllChunksDone() 恒 false → 所有 worker 空转死循环（卡 99%）。
+                        //   正常情况第 1/2 层已把提前 EOF 转成可重试异常，这里只是最后一道
+                        //   保险：任何漏网之鱼都不会让分片永久脱离队列。
+                        if (!chunk.IsDownloadCompleted())
+                            queue.Enqueue(chunk);
                     }
                 }
             }, cancel);
