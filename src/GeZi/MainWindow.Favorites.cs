@@ -245,7 +245,10 @@ namespace GeZi
         {
             var menu = new ContextMenu();
 
-            var del = new MenuItem { Header = "删除这条收藏" };
+            // 同解析历史的右键菜单：这一项没有图标，
+            // 所以套 TrayMenuItem（纯文字紧凑模板），
+            // 免得左边空出隐式样式那个固定 22px 图标列。
+            var del = new MenuItem { Header = "删除这条收藏", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
             del.Click += (s, e) =>
             {
                 try

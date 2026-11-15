@@ -460,11 +460,43 @@
                                                     </MenuItem.Icon>
                                                 </MenuItem>
                                                 <Separator/>
-                                                <MenuItem Header="剪切" Command="ApplicationCommands.Cut"/>
-                                                <MenuItem Header="复制" Command="ApplicationCommands.Copy"/>
-                                                <MenuItem Header="粘贴" Command="ApplicationCommands.Paste"/>
+                                                <MenuItem Header="剪切" Command="ApplicationCommands.Cut">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{StaticResource IconScissors}" Stretch="Uniform"
+                                                              Width="14" Height="14"
+                                                              Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="复制" Command="ApplicationCommands.Copy">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{StaticResource IconCopy}" Stretch="Uniform"
+                                                              Width="14" Height="14"
+                                                              Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <MenuItem Header="粘贴" Command="ApplicationCommands.Paste">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{StaticResource IconClipboard}" Stretch="Uniform"
+                                                              Width="14" Height="14"
+                                                              Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                                 <Separator/>
-                                                <MenuItem Header="全选" Command="ApplicationCommands.SelectAll"/>
+                                                <MenuItem Header="全选" Command="ApplicationCommands.SelectAll">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{StaticResource IconSelectAll}" Stretch="Uniform"
+                                                              Width="14" Height="14"
+                                                              Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
                                             </ContextMenu>
                                         </TextBox.ContextMenu>
                                         <TextBox.Style>
@@ -681,16 +713,21 @@
                                          ⚠️ 这条工具栏是「我的网盘」与「分享链接」两模式共用的，
                                          所以收藏在两边都显示（收藏的是分享链接/文件，
                                          在「我的网盘」模式下打开收藏列表也照样能点开重新解析）。
-                                         用户没要求文字，所以只放图标（与搜索框宽度相当，不抢地方）。 -->
+                                         🚨 2026-11-15 用户指出「光一个星图标太丑了」——
+                                            同排的「上级」「刷新」「解析历史」都是「图标 + 文字」，
+                                            只有收藏是纯图标，看着不齐 ⇒ 补上「收藏」两个字。 -->
                                     <Button x:Name="FavoriteBtn" Click="OnFavoriteButtonClick"
                                             Style="{StaticResource ToolButton}" Margin="0,0,4,0"
                                             ToolTip="收藏夹">
-                                        <Path Data="{StaticResource IconStar}" Stretch="Uniform"
-                                              Width="14" Height="14" VerticalAlignment="Center"
-                                              Stroke="{DynamicResource TextSecondaryBrush}"
-                                              StrokeThickness="1.8"
-                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
-                                              StrokeLineJoin="Round"/>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path Data="{StaticResource IconStar}" Stretch="Uniform"
+                                                  Width="13" Height="13" VerticalAlignment="Center"
+                                                  Stroke="{DynamicResource TextSecondaryBrush}"
+                                                  StrokeThickness="1.8"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round"/>
+                                            <TextBlock Text="收藏" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                                        </StackPanel>
                                     </Button>
                                     <Button x:Name="DriveUpBtn" Click="OnUp" Style="{StaticResource ToolButton}"
                                             ToolTip="返回上级目录">

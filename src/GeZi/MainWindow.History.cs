@@ -619,7 +619,11 @@ namespace GeZi
             //    操作完都会 RebuildHistoryPanel()，标签跟着刷新（不用做双向绑定）。
             var menu = new ContextMenu();
 
-            var pin = new MenuItem { Header = it.Pinned ? "取消置顶" : "置顶" };
+            // 🚨 2026-11-15 用户指出「这两项左边有一片空白」。
+            //    根因：菜单的隐式 MenuItem 样式是**固定 22px 图标列**（给有图标的菜单用），
+            //    这两项都没有图标 ⇒ 图标列空着，文字又从 22px 之后开始 ⇒ 左边空一块。
+            //    这两项本来就没图标，所以直接套 TrayMenuItem（纯文字紧凑模板，不带图标列）。
+            var pin = new MenuItem { Header = it.Pinned ? "取消置顶" : "置顶", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
             pin.Click += (s, e) =>
             {
                 try
@@ -631,7 +635,7 @@ namespace GeZi
                 catch (Exception ex) { Log("置顶操作失败: " + ex.Message); }
             };
 
-            var del = new MenuItem { Header = "删除这条记录" };
+            var del = new MenuItem { Header = "删除这条记录", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
             del.Click += (s, e) =>
             {
                 try
