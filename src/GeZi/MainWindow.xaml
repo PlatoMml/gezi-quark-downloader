@@ -442,6 +442,31 @@
                                              AutomationProperties.Name="分享链接输入框"
                                              DataObject.Pasting="OnLinkBoxPasting"
                                              >
+                                        <!-- ⚠️ 2026-11-15 用户要求「在链接输入位置右键选择收藏链接」。
+                                             WPF 的 TextBox 一旦设了 ContextMenu，**默认的复制/粘贴/全选就没了**，
+                                             所以这里必须把那几个标准项一起补回来，
+                                             否则用户右键想复制，结果什么都复制不了（这是明显的倒退）。
+                                             「收藏链接」放在最上面（用户最常用的动作）。 -->
+                                        <TextBox.ContextMenu>
+                                            <ContextMenu>
+                                                <MenuItem x:Name="FavoriteLinkMenuItem" Header="收藏链接"
+                                                          Click="OnFavoriteLinkClick">
+                                                    <MenuItem.Icon>
+                                                        <Path Data="{StaticResource IconStar}" Stretch="Uniform"
+                                                              Width="14" Height="14"
+                                                              Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
+                                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                              StrokeLineJoin="Round"/>
+                                                    </MenuItem.Icon>
+                                                </MenuItem>
+                                                <Separator/>
+                                                <MenuItem Header="剪切" Command="ApplicationCommands.Cut"/>
+                                                <MenuItem Header="复制" Command="ApplicationCommands.Copy"/>
+                                                <MenuItem Header="粘贴" Command="ApplicationCommands.Paste"/>
+                                                <Separator/>
+                                                <MenuItem Header="全选" Command="ApplicationCommands.SelectAll"/>
+                                            </ContextMenu>
+                                        </TextBox.ContextMenu>
                                         <TextBox.Style>
                                             <!-- 上一版按 Raycast 做成"输入框完全无边框无底色"，
                                                  结果在白卡片上**彻底看不见** —— 用户反馈「解析框不见了」，
@@ -650,6 +675,23 @@
                                                      ToolTip="按名称筛选当前目录的文件/文件夹"/>
                                         </Grid>
                                     </Border>
+                                    <!-- 收藏：用户 2026-11-15 要求「在搜索框和上级中间增加收藏功能」。
+                                         图标是**空心星星**，取自图标库（Icons.xaml 的 IconStar，
+                                         来自 Lucide 官方 star 几何，描边只能上 Stroke）。
+                                         ⚠️ 这条工具栏是「我的网盘」与「分享链接」两模式共用的，
+                                         所以收藏在两边都显示（收藏的是分享链接/文件，
+                                         在「我的网盘」模式下打开收藏列表也照样能点开重新解析）。
+                                         用户没要求文字，所以只放图标（与搜索框宽度相当，不抢地方）。 -->
+                                    <Button x:Name="FavoriteBtn" Click="OnFavoriteButtonClick"
+                                            Style="{StaticResource ToolButton}" Margin="0,0,4,0"
+                                            ToolTip="收藏夹">
+                                        <Path Data="{StaticResource IconStar}" Stretch="Uniform"
+                                              Width="14" Height="14" VerticalAlignment="Center"
+                                              Stroke="{DynamicResource TextSecondaryBrush}"
+                                              StrokeThickness="1.8"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                              StrokeLineJoin="Round"/>
+                                    </Button>
                                     <Button x:Name="DriveUpBtn" Click="OnUp" Style="{StaticResource ToolButton}"
                                             ToolTip="返回上级目录">
                                         <StackPanel Orientation="Horizontal">
@@ -773,6 +815,22 @@
                                                 <Path Data="{StaticResource IconTrash}" Stretch="Uniform"
                                                       Width="14" Height="14"
                                                       Stroke="{DynamicResource DangerBrush}" StrokeThickness="1.7"
+                                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                      StrokeLineJoin="Round"/>
+                                            </MenuItem.Icon>
+                                        </MenuItem>
+                                        <!-- 收藏文件（用户 2026-11-15 要求）：
+                                             「在解析完后的链接中右键文件选择收藏文件」。
+                                             ⚠️ 只在**分享模式**下有意义——「我的网盘」里的文件
+                                             没有对应的分享链接，收藏了也点不开。
+                                             可见性在 OnFileContextMenuOpened 里统一设（ContextMenu.Opened 时机）。 -->
+                                        <MenuItem x:Name="FavoriteFileMenuItem" Header="收藏文件"
+                                                  Click="OnFavoriteFileClick"
+                                                  Visibility="Collapsed">
+                                            <MenuItem.Icon>
+                                                <Path Data="{StaticResource IconStar}" Stretch="Uniform"
+                                                      Width="14" Height="14"
+                                                      Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.7"
                                                       StrokeStartLineCap="Round" StrokeEndLineCap="Round"
                                                       StrokeLineJoin="Round"/>
                                             </MenuItem.Icon>
@@ -3412,6 +3470,98 @@
                                         Style="{StaticResource SecondaryButton}"
                                         Padding="12,5" FontSize="12" Margin="12,0,0,0"
                                         ToolTip="清空全部解析历史"/>
+                            </Grid>
+                        </Border>
+                    </Grid>
+                </Border>
+            </Grid>
+
+            <!-- ================= 收藏夹 =================
+                 用户 2026-11-15 要求：「在搜索框和上级中间增加收藏功能（空心星星图标）」，
+                 「解析一个链接后可以在链接输入位置右键选择收藏链接」，
+                 「在解析完后的链接中右键文件选择收藏文件」，
+                 「点击收藏功能，就有个弹窗能够看到这些收藏，具体方式可复用解析历史的功能代码ui」。
+                 ⇒ 结构**完全照抄解析历史面板**（居中卡片 + 压暗遮罩 + 头/列表/脚三行），
+                 只是图标换成空心星星、文案换成收藏。
+                 Esc 关闭：见 MainWindow.Misc.cs 的 OnMainKeyDown（同时判 HistoryOpen 与 FavoriteOpen）。 -->
+            <Grid x:Name="FavoriteOverlay" Grid.RowSpan="2" Visibility="Collapsed"
+                  Focusable="True" FocusVisualStyle="{x:Null}">
+                <!-- 遮罩：点它 = 关闭 -->
+                <Border Background="{DynamicResource OverlayBrush}"
+                        MouseLeftButtonDown="OnFavoriteOverlayClick"/>
+
+                <Border Width="580" MaxHeight="500"
+                        HorizontalAlignment="Center" VerticalAlignment="Center"
+                        Background="{DynamicResource SurfaceBrush}"
+                        BorderBrush="{DynamicResource BorderBrushSoft}" BorderThickness="1"
+                        CornerRadius="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <!-- 头：空心星星图标 + 标题 + 条数 + 右上角关闭叉号 -->
+                        <Grid Grid.Row="0" Margin="18,16,14,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <StackPanel Grid.Column="0" Orientation="Horizontal"
+                                        VerticalAlignment="Center">
+                                <Path Data="{StaticResource IconStar}" Stretch="Uniform"
+                                      Width="17" Height="17" VerticalAlignment="Center"
+                                      Stroke="{DynamicResource TextPrimaryBrush}" StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"/>
+                                <TextBlock Text="收藏夹" Margin="9,0,0,0" FontSize="14"
+                                           FontWeight="SemiBold" VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextPrimaryBrush}"/>
+                                <TextBlock x:Name="FavoriteCountText" Margin="9,0,0,0" FontSize="11"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextTertiaryBrush}"/>
+                            </StackPanel>
+                            <Button Grid.Column="1"
+                                    Click="OnFavoriteCloseClick"
+                                    Style="{StaticResource IconGhostButton}"
+                                    Width="28" Height="28" Focusable="False"
+                                    AutomationProperties.Name="关闭收藏夹"
+                                    ToolTip="关闭">
+                                <Path Data="{StaticResource IconClose}" Stretch="Uniform"
+                                      Width="11" Height="11"
+                                      HorizontalAlignment="Center" VerticalAlignment="Center"
+                                      Stroke="{DynamicResource TextSecondaryBrush}" StrokeThickness="1.8"
+                                      StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round"/>
+                            </Button>
+                        </Grid>
+
+                        <!-- 列表（内容由 RebuildFavoritePanel 动态生成） -->
+                        <ScrollViewer x:Name="FavoriteScroll"
+                                      Grid.Row="1" VerticalScrollBarVisibility="Auto"
+                                      Padding="10,0,10,12">
+                            <StackPanel x:Name="FavoriteListPanel"/>
+                        </ScrollViewer>
+
+                        <!-- 脚：左侧提示 + 右下角「清空」按钮（与解析历史一致） -->
+                        <Border Grid.Row="2" BorderThickness="0,1,0,0"
+                                BorderBrush="{DynamicResource BorderBrushSoft}"
+                                Padding="18,10,14,10">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Grid.Column="0" FontSize="11" TextWrapping="Wrap"
+                                           VerticalAlignment="Center"
+                                           Foreground="{DynamicResource TextTertiaryBrush}"
+                                           Text="点任意一条即可重新打开那个分享 · 右键可删除 · 按 Esc、或点面板外的空白处关闭"/>
+                                <Button Grid.Column="1" Content="清空"
+                                        Click="OnFavoriteClearClick"
+                                        Style="{StaticResource SecondaryButton}"
+                                        Padding="12,5" FontSize="12" Margin="12,0,0,0"
+                                        ToolTip="清空全部收藏"/>
                             </Grid>
                         </Border>
                     </Grid>

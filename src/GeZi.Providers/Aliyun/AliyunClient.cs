@@ -781,6 +781,67 @@ namespace GeZi.Providers.Aliyun
             return merged;
         }
 
+        /// <summary>
+        /// 轻量探测分享是否还有效：**只换 share_token**，不列目录。
+        /// <para>
+        /// 阿里换 share_token 的接口（<c>/v2/share_link/get_share_token</c>）本身就会
+        /// 明确报出「链接已失效 / 被取消」与「提取码不正确」，正好是我们要的两种结论；
+        /// 其它异常（网络、TLS、令牌过期）一律当「判断不了」。
+        /// </para>
+        /// </summary>
+        public async Task<ShareProbeResult> ProbeShareAsync(
+            PanShareRef shareRef, CancellationToken cancel = default)
+        {
+            if (shareRef == null || string.IsNullOrEmpty(shareRef.ShareId))
+                return new ShareProbeResult { Status = ShareProbeStatus.Unknown, Reason = "分享 ID 为空" };
+
+            try
+            {
+                string token = await GetShareTokenAsync(shareRef.ShareId, shareRef.Passcode ?? "", cancel)
+                    .ConfigureAwait(false);
+                if (string.IsNullOrEmpty(token))
+                {
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Invalid,
+                        Reason = "链接已失效，或提取码不对",
+                    };
+                }
+                return new ShareProbeResult { Status = ShareProbeStatus.Alive };
+            }
+            catch (QuarkApiException ex)
+            {
+                return new ShareProbeResult
+                {
+                    Status = ShareProbeStatus.Invalid,
+                    Reason = DescribeProbeError(ex),
+                };
+            }
+            catch (Exception)
+            {
+                return new ShareProbeResult
+                {
+                    Status = ShareProbeStatus.Unknown,
+                    Reason = "网络没通，暂时判断不了",
+                };
+            }
+        }
+
+        /// <summary>把阿里的报错翻成一句人话。</summary>
+        private static string DescribeProbeError(QuarkApiException ex)
+        {
+            string msg = ex != null && ex.Message != null ? ex.Message : "";
+            if (msg.IndexOf("提取码", StringComparison.Ordinal) >= 0
+                || msg.IndexOf("密码", StringComparison.Ordinal) >= 0
+                || msg.IndexOf("password", StringComparison.OrdinalIgnoreCase) >= 0)
+                return "提取码不对";
+            if (msg.IndexOf("失效", StringComparison.Ordinal) >= 0
+                || msg.IndexOf("取消", StringComparison.Ordinal) >= 0
+                || msg.IndexOf("不存在", StringComparison.Ordinal) >= 0)
+                return "链接已失效";
+            return "链接已失效或提取码不对";
+        }
+
         // ---------------- 免转存取直链 ----------------
 
         /// <summary>

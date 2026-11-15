@@ -853,6 +853,10 @@ namespace GeZi
             {
                 try { Log(msg); } catch { }
             };
+            FavoriteStore.LogSink = msg =>
+            {
+                try { Log(msg); } catch { }
+            };
 
             // 迅雷取码器与「内嵌登录」窗口共用 profile-xunlei（deviceid 必须一致，
             // 不能换目录），而 WebView2 不允许同一用户数据目录开两个环境。

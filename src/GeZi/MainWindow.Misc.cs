@@ -137,7 +137,7 @@ namespace GeZi
         // 一行 = 文件夹图标 + 名称 + 「时间 · 分享 ID · 提取码」，悬停整行高亮。
 
         /// <summary>
-        /// 窗口级按键。**目前只处理 Esc**（关闭解析历史面板）。
+        /// 窗口级按键。**目前只处理 Esc**（关闭浮层面板）。
         /// 🚨 第三方分支那一整套快捷键（1/2/3 切页、h 开历史、a/d/x/g 等）
         /// 我们**不采纳**，所以这里刻意不做任何单键分发 —— 只保留
         /// 「面板开着时 Esc 关闭」这一条**必要**行为：面板自己的文案就写着
@@ -146,6 +146,14 @@ namespace GeZi
         private void OnMainKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key != Key.Escape) return;
+            // 🚨 2026-11-15 收藏夹也写了「按 Esc 关闭」，所以两个面板都要认 Esc。
+            //   先判收藏夹：它叠在解析历史上层开着的话，先关最上面那个。
+            if (FavoriteOpen)
+            {
+                HideFavoritePanel();
+                e.Handled = true;
+                return;
+            }
             if (!HistoryOpen) return;
             HideHistoryPanel();
             e.Handled = true;

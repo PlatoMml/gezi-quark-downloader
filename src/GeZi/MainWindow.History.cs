@@ -224,17 +224,20 @@ namespace GeZi
         private readonly Dictionary<string, Border> _historyBadges = new Dictionary<string, Border>();
 
         /// <summary>
-        /// 上次校验结论是否还"够新"（10 分钟内）。
+        /// 上次校验结论是否还"够新"（1 小时内）。
         /// 结论本身已经落盘在 <c>ShareHistoryEntry.Validity</c> 里，这里只判断它是不是过期了
         /// —— 过期就重新打一次网络（分享可能中途被恢复/被删）。
         /// 时间串解析失败（老数据、手改过）一律当作"过期"，宁可多探一次。
+        ///
+        /// 🚨 2026-11-15 由 10 分钟放宽到 1 小时：失效探测用的是「只换凭证不列目录」的轻量请求，
+        /// 一条就一个 GET，50 条历史全探也就 50 个包，没必要 10 分钟就重探一遍刷网盘。
         /// </summary>
         private static bool FreshEnough(string at)
         {
             if (string.IsNullOrEmpty(at)) return false;
             DateTime t;
             if (!DateTime.TryParse(at, out t)) return false;
-            return (DateTime.Now - t).TotalMinutes < 10;
+            return (DateTime.Now - t).TotalMinutes < 60;
         }
 
         /// <summary>面板重建代次：异步校验回来时代次变了就丢弃结果（行已经不在屏幕上了）。</summary>
@@ -243,21 +246,27 @@ namespace GeZi
         /// <summary>
         /// 校验解析历史里保存的链接**是否还有效**，失效的在行尾打「已失效」标签。
         ///
-        /// 两步走：① 换分享凭证（<c>sharepage/token</c>）—— 这一步匿名也能过，
-        /// **不需要登录**；服务端对已删除/已过期的分享会返回非 0 code，
-        /// <c>GetStokenAsync</c> 内部 <c>Check</c> 抛异常 —— 抛了就是失效。
-        /// ② 再真列一次目录（<c>sharepage/detail</c>）—— **0 条文件才算失效**
-        /// （用户 2026-10-26 要求：「对里边保存的链接进行校验，失效的会显示失效」，
-        /// 而分享还在、内容被清空时点进去同样是空的，那也算失效）。
+        /// 🚨 2026-11-15 改成**两阶段**（用户要求「占性能机器之少并且快速检测」）：
+        /// <para>
+        /// 阶段一「只换凭证」—— <c>IPanProvider.ProbeShareAsync</c>：只做一次
+        /// 「拿这个分享的临时凭证」的请求，**不列目录**。这一步就能判两种最常见的情况：
+        /// 服务端明确拒绝（分享被删/过期/取消）= 确定失效；提取码不对 = 也是失效。
+        /// 它比原来直接调 <c>ListShareAsync</c> 便宜 —— 原来每条都要「换凭证 + 列一次目录」，
+        /// 而失效的链接根本列不了目录，白白多花一个请求。
+        /// </para>
+        /// <para>
+        /// 阶段二「列一次目录」—— 只有阶段一判定**还有效**的链接才做这一步，
+        /// 因为用户 2026-10-26 明确要求「分享还在但里面被清空（或者当初解析的那个子目录
+        /// 已经没了）」也算失效（点进去是空列表，和失效没区别）。这一步只对"活着的"
+        /// 链接发生，失效的那一批不会白白列目录。
+        /// </para>
         ///
         /// 三条纪律：
         /// ① **四家都探**（2026-10-26 放开）。原来只查夸克 / UC，理由是"阿里 / 迅雷 换凭证是另一套
         ///    接口，拿夸克客户端去探会一律抛异常 → 把好好的链接标成已失效，那是说谎"。
-        ///    现在四家各走自己的 <see cref="IPanProvider.ListShareAsync"/>，不再有这个问题：
-        ///    夸克 / UC 走 <see cref="QuarkProviderAdapter"/>，阿里 / 迅雷走各自客户端，
-        ///    它们内部都是「换凭证 → 列一次目录」，语义完全一致。
+        ///    现在四家各走自己的实现，不再有这个问题。
         /// ② 并发限 3：一次开十几条历史时不至于把界面线程/网络打满。
-        /// ③ 结果按 pwd_id 缓存 10 分钟：反复开关面板不重复请求。
+        /// ③ 结果按 pwd_id 缓存 1 小时：反复开关面板不重复请求。
         /// </summary>
         private async Task ProbeHistoryValidityAsync(int gen)
         {
@@ -265,11 +274,18 @@ namespace GeZi
             foreach (var it in HistoryStore.GetShareHistory())
             {
                 if (string.IsNullOrEmpty(it.PwdId)) continue;
-                if (!_historyBadges.ContainsKey(it.PwdId)) continue;
+                // 🚨 2026-11-15 去掉了「只探已经铺出来的行」的限制：
+                //   原来这里有一句 `if (!_historyBadges.ContainsKey(it.PwdId)) continue;`，
+                //   意思是**没滚动到的历史记录根本不会被探测** —— 这正是用户说的
+                //   「记录根本不检测」。历史面板一次只铺 20 行，剩下 30 条永远不会被探，
+                //   它们的「已失效」标签也就永远不会出现。
+                //   现在改成**全量探测**：面板打开就把所有历史都探一遍，
+                //   探到的结论落盘（ShareHistoryEntry.Validity），
+                //   之后滚动铺出行时 MakeHistoryRow 会直接读 Validity==2 显示「已失效」。
                 // 只探我们真的能构造出客户端的四家；别的（将来新增的）宁可不显示标签。
                 if (it.PanKind < (int)PanKind.Quark || it.PanKind > (int)PanKind.Xunlei) continue;
 
-                // 缓存有效期 10 分钟：结论已经落盘（ShareHistoryEntry.Validity / ValidityAt），
+                // 缓存有效期 1 小时：结论已经落盘（ShareHistoryEntry.Validity / ValidityAt），
                 // 所以"本会话探过"和"上次运行探过"用同一套判断，不再需要单独的内存字典。
                 if (it.Validity != 0 && FreshEnough(it.ValidityAt))
                     continue;
@@ -291,7 +307,8 @@ namespace GeZi
                         tasks.Add(Task.Run(async () =>
                         {
                             await gate.WaitAsync().ConfigureAwait(false);
-                            bool? alive = null;
+                            // 0 = 判断不了（网络问题，不落盘、不显示标签）；1 = 有效；2 = 失效。
+                            int verdict = 0;
                             try
                             {
                                 IPanProvider p;
@@ -300,12 +317,6 @@ namespace GeZi
                                     if (!providers.TryGetValue(entry.PanKind, out p))
                                     {
                                         p = BuildProbeProvider((PanKind)entry.PanKind);
-                                        if (p == null)
-                                        {
-                                            // 没登录这家 → 探不了。不显示标签，绝不瞎标。
-                                            providers[entry.PanKind] = null;
-                                            return;
-                                        }
                                         providers[entry.PanKind] = p;
                                     }
                                 }
@@ -319,41 +330,60 @@ namespace GeZi
                                     StartFid = string.IsNullOrEmpty(entry.StartFid) ? "0" : entry.StartFid,
                                 };
 
-                                // 🚨 2026-10-26 用户要求「解析后没有任何文件才算失效」：
-                                //   只换到凭证是不够的 —— 分享还在、但里面被清空
-                                //   （或者当初解析的那个子目录已经没了）时，
-                                //   用户点进去只会看到一个空列表，那和失效没区别。
-                                //   所以列一次目录，0 条才标「已失效」。
-                                //   四家的 ListShareAsync 内部都是「换凭证 → 列目录」，语义一致。
-                                var files = await p.ListShareAsync(shareRef, shareRef.StartFid)
-                                    .ConfigureAwait(false);
-                                alive = files != null && files.Count > 0;
+                                // 阶段一：只换凭证，不列目录。
+                                var probe = await p.ProbeShareAsync(shareRef).ConfigureAwait(false);
+                                if (probe == null) return;
+                                if (probe.IsInvalid)
+                                {
+                                    verdict = 2;   // 服务端明确拒绝 = 确定失效
+                                }
+                                else if (probe.IsAlive)
+                                {
+                                    // 阶段二：只有"还活着"的才列一次目录，看是不是空分享。
+                                    try
+                                    {
+                                        var files = await p.ListShareAsync(shareRef, shareRef.StartFid)
+                                            .ConfigureAwait(false);
+                                        verdict = (files != null && files.Count > 0) ? 1 : 2;
+                                    }
+                                    catch (QuarkApiException)
+                                    {
+                                        // 服务端明确拒绝（分享被删 / 子目录没了）= 失效。
+                                        verdict = 2;
+                                    }
+                                    catch
+                                    {
+                                        // 网络问题 ≠ 失效，别把好好的链接标红。
+                                        verdict = 0;
+                                    }
+                                }
+                                else
+                                {
+                                    // Unknown：连不上或者需要提取码才能判断 —— 不下结论。
+                                    verdict = 0;
+                                }
                             }
                             catch (QuarkApiException)
                             {
                                 // 🚨🚨 2026-10-26 修「明明失效却不显示已失效」：
-                                //   这里原来是一个**裸 catch**，把 QuarkApiException 和网络超时
-                                //   一视同仁地当成 alive=null（不显示标签）。
-                                //   但 QuarkApiException 是服务端**明确拒绝**（分享不存在 / 已过期 /
-                                //   密码被改 / 文件被删），它恰恰是"失效"最硬的证据 ——
-                                //   被裸 catch 吞掉之后，真失效的链接永远不会标红。
-                                //   现在拆开：业务拒绝 = 确定失效。
-                                alive = false;
+                                //   QuarkApiException 是服务端**明确拒绝**（分享不存在 / 已过期 /
+                                //   密码被改 / 文件被删），它恰恰是"失效"最硬的证据。
+                                verdict = 2;
                             }
                             catch
                             {
                                 // 剩下的才是真的网络问题（超时 / DNS / 断网 / TLS）。
                                 // 这种情况不能算"失效"，否则断网时整列历史都会变红 —— 那是说谎。
-                                alive = null;
+                                verdict = 0;
                             }
                             finally
                             {
                                 gate.Release();
                             }
 
-                            if (alive == null) return;
-                            lock (verdicts) verdicts[entry.PwdId] = alive.Value ? 1 : 2;
-                            if (alive.Value) return;
+                            if (verdict == 0) return;
+                            lock (verdicts) verdicts[entry.PwdId] = verdict;
+                            if (verdict == 1) return;
 
                             // 回到 UI 线程改标签；代次变了说明面板已经重建，这一行作废。
                             try
@@ -394,7 +424,14 @@ namespace GeZi
 
         /// <summary>
         /// 给「解析历史失效探测」造一个该网盘的临时客户端。
-        /// 没登录（拿不到凭证）时返回 <c>null</c> —— 调用方据此跳过、不显示标签。
+        /// <para>
+        /// 🚨 2026-11-15：夸克 / UC **没登录也照样造**（Cookie 空就传空串）。
+        /// 因为它们的 stoken 接口（sharepage/token）匿名即可访问 ——
+        /// 原来这里「Cookie 空就 return null」，等于「没登录夸克 → 所有夸克历史一条都不探」，
+        /// 这也是用户说的「记录根本不检测」的原因之一。
+        /// 阿里 / 迅雷仍然必须有凭证（它们的换凭证接口要登录态），拿不到就返回 null，
+        /// 调用方据此跳过、不显示标签（绝不瞎标）。
+        /// </para>
         /// </summary>
         private IPanProvider BuildProbeProvider(PanKind kind)
         {
@@ -402,14 +439,13 @@ namespace GeZi
             {
                 case PanKind.Quark:
                     {
+                        // 匿名可探：Cookie 空也造一个（QuarkSession 不会因为 Cookie 空而报错）。
                         string cookie = _settings.Cookie ?? "";
-                        if (string.IsNullOrWhiteSpace(cookie)) return null;
                         return new QuarkProviderAdapter(new QuarkClient(cookie, PanKind.Quark), ownsClient: true);
                     }
                 case PanKind.Uc:
                     {
                         string cookie = _settings.UcCookie ?? "";
-                        if (string.IsNullOrWhiteSpace(cookie)) return null;
                         return new QuarkProviderAdapter(new QuarkClient(cookie, PanKind.Uc), ownsClient: true);
                     }
                 case PanKind.Aliyun:

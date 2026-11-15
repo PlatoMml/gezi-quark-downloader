@@ -355,6 +355,115 @@ namespace GeZi.Providers.Xunlei
 
 
         /// <summary>
+        /// 轻量探测分享是否还有效：**只打一次分享根目录（limit=1）**，不翻页、不取文件列表。
+        /// <para>
+        /// 迅雷的分享根目录接口（<c>GET /drive/v1/share</c>）会在 <c>share_status</c> 里
+        /// 明确给出分享状态，这就是我们要的判据：
+        /// <list type="bullet">
+        /// <item><c>PASS_CODE_ERROR</c> → 提取码错了 ⇒ <b>确定失效</b>；</item>
+        /// <item><c>PASS_CODE_EMPTY</c> / <c>PASS_CODE_NEED</c> → 需要提取码但我们没给
+        ///       ⇒ <b>判断不了</b>（不能算失效）；</item>
+        /// <item>正常返回 ⇒ <b>还有效</b>。</item>
+        /// </list>
+        /// 网络异常 ⇒ 判断不了（<b>绝不能</b>当失效）。
+        /// </para>
+        /// </summary>
+        public async Task<ShareProbeResult> ProbeShareAsync(
+            PanShareRef shareRef, CancellationToken cancel = default)
+        {
+            if (shareRef == null || string.IsNullOrEmpty(shareRef.ShareId))
+                return new ShareProbeResult { Status = ShareProbeStatus.Unknown, Reason = "分享 ID 为空" };
+
+            try
+            {
+                var query = new Dictionary<string, string>
+                {
+                    { "share_id", shareRef.ShareId },
+                    { "pass_code", shareRef.Passcode ?? "" },
+                    { "limit", "1" },
+                    { "page_token", "" },
+                    { XunleiConstants.DeviceIdParam, _deviceId },
+                    { XunleiConstants.ClientIdParam, XunleiConstants.ClientId },
+                };
+
+                object res = await GetJsonAsync(_apiBase + XunleiConstants.ShareRootPath, query, cancel)
+                    .ConfigureAwait(false);
+
+                string status = PanJson.AsString(PanJson.Get(res, "share_status")) ?? "";
+                if (status == "PASS_CODE_ERROR")
+                {
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Invalid,
+                        Reason = "提取码不对",
+                    };
+                }
+                if (status == "PASS_CODE_EMPTY" || status == "PASS_CODE_NEED")
+                {
+                    // 需要提取码 —— 现在还判断不了，不能说它失效。
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Unknown,
+                        Reason = "需要提取码才能判断",
+                    };
+                }
+
+                // 服务端明确给了错误描述（分享被取消 / 不存在）⇒ 确定失效。
+                string err = PanJson.AsString(PanJson.Get(res, "error_description"))
+                             ?? PanJson.AsString(PanJson.Get(res, "message"))
+                             ?? PanJson.AsString(PanJson.Get(res, "error")) ?? "";
+                if (!string.IsNullOrEmpty(err)
+                    && PanJson.AsArray(PanJson.Get(res, "files")) == null
+                    && PanJson.AsArray(PanJson.Get(res, "list")) == null)
+                {
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Invalid,
+                        Reason = "链接已失效",
+                    };
+                }
+
+                return new ShareProbeResult { Status = ShareProbeStatus.Alive };
+            }
+            catch (QuarkApiException ex)
+            {
+                string msg = ex != null && ex.Message != null ? ex.Message : "";
+                if (msg.IndexOf("提取码", StringComparison.Ordinal) >= 0
+                    || msg.IndexOf("pass_code", StringComparison.OrdinalIgnoreCase) >= 0)
+                {
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Invalid,
+                        Reason = "提取码不对",
+                    };
+                }
+                if (msg.IndexOf("失效", StringComparison.Ordinal) >= 0
+                    || msg.IndexOf("不存在", StringComparison.Ordinal) >= 0
+                    || msg.IndexOf("取消", StringComparison.Ordinal) >= 0)
+                {
+                    return new ShareProbeResult
+                    {
+                        Status = ShareProbeStatus.Invalid,
+                        Reason = "链接已失效",
+                    };
+                }
+                return new ShareProbeResult
+                {
+                    Status = ShareProbeStatus.Unknown,
+                    Reason = "网络没通，暂时判断不了",
+                };
+            }
+            catch (Exception)
+            {
+                return new ShareProbeResult
+                {
+                    Status = ShareProbeStatus.Unknown,
+                    Reason = "网络没通，暂时判断不了",
+                };
+            }
+        }
+
+        /// <summary>
         /// 只打一次分享根目录，把 <c>pass_code_token</c> 取回来缓存。
         /// <para>
         /// 用于「没先列根目录就直接进子目录」的场景（例如链接里带了子目录 ID）。

@@ -310,12 +310,17 @@ namespace GeZi
         }
 
         /// <summary>解析分享的实际流程（闸门已在 <see cref="OnParseClick"/> 里）。</summary>
-        private async Task ParseShareCoreAsync()
+        /// <param name="alreadyBusy">
+        /// 调用方已经把这个按钮切成忙态时传 true（口令解析那条路会先 busy 再回头调这里），
+        /// 这样按钮不会因为"重复 BeginBusy"被拒而白跑一次。
+        /// </param>
+        private async Task ParseShareCoreAsync(bool alreadyBusy = false)
         {
             string url = LinkBox.Text.Trim();
             if (string.IsNullOrEmpty(url))
             {
                 Log("请先粘贴分享链接");
+                NoticeParse("请输入分享链接或口令。");
                 return;
             }
 
@@ -340,7 +345,7 @@ namespace GeZi
                 && otherPan.Kind != PanKind.Quark
                 && otherPan.Kind != PanKind.Uc)
             {
-                await ParseOtherPanAsync(otherPan).ConfigureAwait(true);
+                await ParseOtherPanAsync(otherPan, alreadyBusy).ConfigureAwait(true);
                 return;
             }
 
@@ -357,17 +362,20 @@ namespace GeZi
             var info = ShareUrlParser.Parse(url);
             if (info.IsKouling)
             {
-                // 夸克口令（形如 /~469d3M9zTu~:/）**不是**分享链接，也没有公开的
-                // 「口令 → 链接」接口（查过官方开放平台与非官方 API 文档，分享相关
-                // 接口只接受 pwd_id）。所以这里不装作能解析，直接给出可操作的指引。
-                Log("这是夸克口令（/~" + info.Kouling + "~:/），不是分享链接，无法直接解析。");
-                AppDialog.Show(this, KoulingText(info.Kouling),
-                    "这是夸克口令", MessageBoxButton.OK, MessageBoxImage.Information);
+                // 夸克口令（形如 /~469d3M9zTu~:/）不是分享链接，但**可以**通过口令解析服务
+                // 换成真链接。以前这里是弹个框说「无法解析」就完事 ——
+                // 用户看到的是「程序把我输入的话当空气了」，这正是要改掉的地方。
+                Log("识别到夸克口令（/~" + info.Kouling + "~:/），正在换成分享链接…");
+                await ParseShareCommandAsync(url).ConfigureAwait(true);
                 return;
             }
             if (string.IsNullOrEmpty(info.PwdId))
             {
-                Log("无法从链接解析出分享 ID");
+                // 既不是四家网盘的链接，也没有 /s/xxx 形态的分享 ID。
+                // 那就可能是**口令**（中文口令 / 含提取码的分享文案 / 短码），
+                // 交给口令解析；真不是口令就提示「请输入链接和口令」。
+                Log("没能从输入里认出分享 ID，按口令处理。");
+                await ParseShareCommandAsync(url).ConfigureAwait(true);
                 return;
             }
             string passcode = string.IsNullOrEmpty(PassBox.Text.Trim()) ? info.Passcode : PassBox.Text.Trim();
@@ -413,7 +421,11 @@ namespace GeZi
 
             // 解析要发两次网络请求（换 stoken + 拉目录），期间必须让用户看到"在忙"
             long t0 = BusyClock();
-            if (!BeginBusy(ParseBtn, "解析中")) return;
+            // ⚠️ alreadyBusy=true 时**不能**再 BeginBusy —— BeginBusy 见到按钮已在忙态
+            //    会直接返回 false，这里 return 就等于"口令解析成功了但什么也没发生"。
+            //    所以外层已经切过忙态时，这里只借 SetBusy 维持全局忙态、不动按钮。
+            bool ownsBusy = !alreadyBusy;
+            if (ownsBusy && !BeginBusy(ParseBtn, "解析中")) return;
             SetBusy(true);
             try
             {
@@ -421,6 +433,9 @@ namespace GeZi
                 if (string.IsNullOrEmpty(_stoken))
                 {
                     Log("获取分享凭证失败（可能需登录或提取码错误）");
+                    // 链接/口令解析不出来，界面上一律给这一句 —— 不再让用户面对
+                    // 「到底是链接坏了、码错了，还是没登录」这种分不清的情况。
+                    NoticeParse("链接已失效或网络故障。");
                     NoticeNeedLogin("获取分享凭证失败，可能需要登录或提取码不对。", false);
                     NotifyIfHidden("自动解析失败",
                         "获取分享凭证失败，可能需要登录，或分享提取码不正确。");
@@ -434,6 +449,18 @@ namespace GeZi
                     + "（多选用 Shift / Ctrl+点击，或右键该行）。");
                 // 记入解析历史（原文案是「单击进入」，我们保留双击版）
                 RecordShareHistory(info.PwdId, passcode, info.StartFid);
+                // 从收藏夹点进来的（收藏的是分享里的某个文件）→ 进目录后自动定位到那个文件
+                TryDrillToFavoriteTarget();
+                if (_files.Count == 0)
+                {
+                    // 分享能打开、但当前目录一个文件都没有 —— 用户看到的还是"没东西"。
+                    // 提示要区分两种情况：目录真的是空的 vs 链接其实已经失效。
+                    NoticeParse("链接已失效或网络故障。");
+                }
+                else
+                {
+                    NoticeParse("解析成功，共 " + _files.Count + " 个文件。");
+                }
                 NotifyIfHidden("已解析剪贴板里的分享链接",
                     _files.Count > 0
                         ? "共 " + _files.Count + " 个文件。双击托盘图标打开窗口即可下载。"
@@ -442,12 +469,16 @@ namespace GeZi
             catch (Exception ex)
             {
                 Log("解析失败: " + ex.Message);
+                NoticeParse("链接已失效或网络故障。");
                 NotifyIfHidden("自动解析失败", ex.Message);
             }
             finally
             {
                 SetBusy(false);
-                await EndBusyAsync(ParseBtn, t0);
+                // 只还原"自己开的"忙态：alreadyBusy 时按钮是外层（口令解析那条路）开的，
+                // 由外层 EndBusyAsync 还原，否则会把外层的转圈提前撤掉。
+                if (ownsBusy)
+                    await EndBusyAsync(ParseBtn, t0);
             }
         }
 
@@ -459,7 +490,11 @@ namespace GeZi
         /// 所以"未登录"时必须给出**去哪拿凭证**的指引，而不是一句"解析失败"。
         /// </para>
         /// </summary>
-        private async Task ParseOtherPanAsync(PanShareRef shareRef)
+        /// <param name="alreadyBusy">
+        /// 调用方已经把这个按钮切成忙态时传 true（口令解析那条路会先 busy 再回头调这里），
+        /// 否则 <see cref="BeginBusy"/> 会因"已在忙 → 拒绝重入"直接返回，等于什么都没干。
+        /// </param>
+        private async Task ParseOtherPanAsync(PanShareRef shareRef, bool alreadyBusy = false)
         {
             string panName = PanUrlParser.DisplayNameOf(shareRef.Kind);
 
@@ -520,7 +555,10 @@ namespace GeZi
             _dirSizeCache.Clear();
 
             long t0 = BusyClock();
-            if (!BeginBusy(ParseBtn, "解析中")) return;
+            // ⚠️ 口令解析那条路进来时按钮已经是忙态（alreadyBusy），再 BeginBusy 会
+            //    被"已在忙 → 拒绝重入"挡掉，这里就等于什么都没干就返回了。
+            bool ownsBusy = !alreadyBusy;
+            if (ownsBusy && !BeginBusy(ParseBtn, "解析中")) return;
             SetBusy(true);
             try
             {
@@ -537,6 +575,12 @@ namespace GeZi
                 bool canFree = shareRef.Kind == PanKind.Quark || shareRef.Kind == PanKind.Uc;
                 Log("解析成功（" + panName + (canFree ? "，支持免转存" : "，下载时自动转存")
                     + "）。双击文件夹进入子目录；选中文件后点「下载选中」即可下载。");
+                // 从收藏夹点进来的（收藏的是分享里的某个文件）→ 进目录后自动定位到那个文件
+                TryDrillToFavoriteTarget();
+                if (_files.Count == 0)
+                    NoticeParse("链接已失效或网络故障。");
+                else
+                    NoticeParse("解析成功，共 " + _files.Count + " 个文件。");
                 NotifyIfHidden("已解析 " + panName + " 分享",
                     _files.Count > 0
                         ? "共 " + _files.Count + " 个文件。双击托盘图标打开窗口即可下载。"
@@ -545,6 +589,7 @@ namespace GeZi
             catch (Exception ex)
             {
                 Log(panName + "解析失败: " + ex.Message);
+                NoticeParse("链接已失效或网络故障。");
                 NotifyIfHidden(panName + "解析失败", ex.Message);
 
                 // 解析失败最常见的原因就是令牌过期（服务端 401 / token invalid）。
@@ -556,7 +601,9 @@ namespace GeZi
             finally
             {
                 SetBusy(false);
-                await EndBusyAsync(ParseBtn, t0);
+                // 只还原"自己开的"忙态：alreadyBusy 时按钮是外层（口令解析那条路）开的。
+                if (ownsBusy)
+                    await EndBusyAsync(ParseBtn, t0);
             }
         }
 
@@ -1025,6 +1072,17 @@ namespace GeZi
                 DeleteFileMenuItem.Visibility = canDelete ? Visibility.Visible : Visibility.Collapsed;
             if (DeleteFileSeparator != null)
                 DeleteFileSeparator.Visibility = canDelete ? Visibility.Visible : Visibility.Collapsed;
+
+            // 🚨 2026-11-15 新增「收藏文件」：
+            //   只在**分享模式** + 有选中项时出现。
+            //   · 我的网盘的文件没有分享链接，收藏了也没法「重新打开定位」；
+            //   · 没选中东西时也不知道该收藏谁。
+            bool canFavoriteFile = ShareMode
+                && FileList != null
+                && FileList.SelectedItems != null
+                && FileList.SelectedItems.Count > 0;
+            if (FavoriteFileMenuItem != null)
+                FavoriteFileMenuItem.Visibility = canFavoriteFile ? Visibility.Visible : Visibility.Collapsed;
 
             // 🚨 2026-11-02 空菜单兜底（用户报「右键只剩一个白点」）：
             //   原来这个菜单只有「免转存下载」一项，我的网盘模式下它被折叠 →
