@@ -260,6 +260,35 @@ namespace GeZi
                 catch (Exception ex) { Log("删除收藏失败: " + ex.Message); }
             };
 
+            // 2026-11-15 用户要求：收藏夹里的条目也能右键重命名。
+            //   只改显示名，ShareId / RelDir / Fid 一律不动 —— 那是这条收藏的身份。
+            var rename = new MenuItem { Header = "重命名", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
+            rename.Click += (s, e) =>
+            {
+                try
+                {
+                    string newName = TextInputDialog.Ask(this, "重命名", "给这条收藏起个新名字", it.Name);
+                    if (string.IsNullOrEmpty(newName)) return;
+                    string trimmed = newName.Trim();
+                    if (trimmed.Length == 0)
+                    {
+                        NoticeFavorite("名字不能为空");
+                        return;
+                    }
+                    if (FavoriteStore.Rename(it, trimmed))
+                    {
+                        RebuildFavoritePanel();
+                        Log("已重命名收藏：" + it.Name + " → " + trimmed);
+                    }
+                    else
+                    {
+                        NoticeFavorite("重命名没成功，请再试一次");
+                    }
+                }
+                catch (Exception ex) { Log("重命名收藏失败: " + ex.Message); }
+            };
+
+            menu.Items.Add(rename);
             menu.Items.Add(del);
             return menu;
         }

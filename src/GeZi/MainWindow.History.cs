@@ -647,7 +647,70 @@ namespace GeZi
                 catch (Exception ex) { Log("删除记录失败: " + ex.Message); }
             };
 
+            // 2026-11-15 用户要求：解析历史里的条目可以右键重命名。
+            //   只改「显示名」，pwd_id / 提取码 / 起始 fid 一律不动 —— 那是这条记录的身份，
+            //   改了它就再也点不开了（点开靠的是 pwd_id）。
+            var rename = new MenuItem { Header = "重命名", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
+            rename.Click += (s, e) =>
+            {
+                try
+                {
+                    string newName = TextInputDialog.Ask(this, "重命名", "给这条记录起个新名字", it.Name);
+                    if (string.IsNullOrEmpty(newName)) return;
+                    string trimmed = newName.Trim();
+                    if (trimmed.Length == 0)
+                    {
+                        NoticeFavorite("名字不能为空");
+                        return;
+                    }
+                    if (HistoryStore.RenameShareHistory(it.PwdId, trimmed))
+                    {
+                        RebuildHistoryPanel();
+                        Log("已重命名：" + it.Name + " → " + trimmed);
+                    }
+                    else
+                    {
+                        NoticeFavorite("重命名没成功，请再试一次");
+                    }
+                }
+                catch (Exception ex) { Log("重命名失败: " + ex.Message); }
+            };
+
+            // 2026-11-15 用户要求：解析历史里的条目可以直接收藏到「收藏夹」里。
+            //   收藏的是**这个分享链接本身**（不是某个文件）⇒ IsFile = false。
+            //   收藏夹里点它会重新解析这个分享，所以提取码 / 起始 fid 都要带上。
+            var fav = new MenuItem { Header = "收藏这条分享", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
+            fav.Click += (s, e) =>
+            {
+                try
+                {
+                    var entry = new FavoriteEntry
+                    {
+                        PanKind = it.PanKind,
+                        ShareId = it.PwdId ?? "",
+                        Passcode = it.Passcode ?? "",
+                        StartFid = string.IsNullOrEmpty(it.StartFid) ? "0" : it.StartFid,
+                        Url = "",
+                        Name = it.Name ?? "",
+                        IsFile = false,
+                        RelDir = "",
+                    };
+                    if (FavoriteStore.Add(entry))
+                    {
+                        NoticeFavorite("已收藏这个分享");
+                        Log("已收藏分享：" + it.Name);
+                    }
+                    else
+                    {
+                        NoticeFavorite("这个分享已经在收藏夹里了");
+                    }
+                }
+                catch (Exception ex) { Log("收藏失败: " + ex.Message); }
+            };
+
             menu.Items.Add(pin);
+            menu.Items.Add(rename);
+            menu.Items.Add(fav);
             menu.Items.Add(del);
             return menu;
         }

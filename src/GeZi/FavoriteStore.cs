@@ -254,6 +254,41 @@ namespace GeZi
             }
         }
 
+        /// <summary>
+        /// 给某条收藏改显示名（用户在收藏夹里右键「重命名」用）。
+        /// <para>
+        /// 只改 <c>Name</c>；<c>ShareId</c> / <c>RelDir</c> / <c>Fid</c> 一律不动 ——
+        /// 那是「这条收藏指向哪个东西」的身份，改了就定位不到了。
+        /// </para>
+        /// </summary>
+        /// <returns>真的改到并写盘了才返回 true。</returns>
+        public static bool Rename(FavoriteEntry entry, string newName)
+        {
+            if (entry == null) return false;
+            string name = (newName ?? "").Trim();
+            if (name.Length == 0) return false;
+            lock (Gate)
+            {
+                var st = Load();
+                bool changed = false;
+                foreach (var it in st.Items)
+                {
+                    if (it == null) continue;
+                    if (it.PanKind != entry.PanKind) continue;
+                    if (!string.Equals(it.ShareId ?? "", entry.ShareId ?? "", StringComparison.Ordinal)) continue;
+                    if (it.IsFile != entry.IsFile) continue;
+                    if (!string.Equals(it.RelDir ?? "", entry.RelDir ?? "", StringComparison.Ordinal)) continue;
+                    // 改名之后老名字就找不到了，所以这里按「同一个分享 + 同一个目录 + 同类」匹配，
+                    // 不拿 Name 参与匹配（否则永远匹配不上）。
+                    it.Name = name;
+                    changed = true;
+                }
+                if (!changed) return false;
+                Save(st);
+                return true;
+            }
+        }
+
         /// <summary>清空全部收藏。</summary>
         public static void Clear()
         {

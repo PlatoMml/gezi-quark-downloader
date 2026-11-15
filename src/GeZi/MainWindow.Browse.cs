@@ -536,6 +536,18 @@ namespace GeZi
             _panProvider = provider;
             _panKind = shareRef.Kind;
             _panShareRef = shareRef;
+
+            // 🚨 2026-11-15：多网盘链路（UC / 阿里 / 迅雷）以前**只认链接里自带的提取码**，
+            //    压根不看用户填在「提取码」框里的内容 —— 用户在框里敲了码，解析照样报
+            //    「该迅雷分享需要提取码」（2026-11-15 真机日志实证）。
+            //    夸克链路（ParseShareCoreAsync）一直是「框里的码优先，链接里的兜底」，
+            //    这里补成同一口径，别让两家行为不一致。
+            string typedPasscode = (PassBox != null ? PassBox.Text : "").Trim();
+            if (!string.IsNullOrEmpty(typedPasscode))
+                shareRef.Passcode = typedPasscode;
+            else if (!string.IsNullOrEmpty(shareRef.Passcode) && PassBox != null)
+                PassBox.Text = shareRef.Passcode;   // 链接里带码就回填到框里，让用户看得见
+
             _passcode = shareRef.Passcode ?? "";
 
             // 2026-11-02：把分享 ID 同步写进 _pwdId。

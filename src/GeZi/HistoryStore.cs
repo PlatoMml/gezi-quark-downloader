@@ -553,6 +553,40 @@ namespace GeZi
             }
             catch { }
         }
+
+        /// <summary>
+        /// 给某条解析历史改个显示名（用户在右键菜单里「重命名」用）。
+        /// <para>
+        /// 只改 <c>Name</c> 这个**显示用的名字**，不动 pwd_id / 提取码 / 起始 fid ——
+        /// 那几个是这条记录的「身份」，改了这条记录就再也点不开了。
+        /// </para>
+        /// </summary>
+        /// <returns>真的改到并写盘了才返回 true。</returns>
+        public static bool RenameShareHistory(string pwdId, string newName)
+        {
+            if (string.IsNullOrEmpty(pwdId)) return false;
+            string name = (newName ?? "").Trim();
+            if (name.Length == 0) return false;
+            try
+            {
+                lock (Gate)
+                {
+                    var s = Load();
+                    bool changed = false;
+                    foreach (var e in s.Shares)
+                    {
+                        if (string.Equals(e.PwdId, pwdId, StringComparison.Ordinal))
+                        {
+                            e.Name = name;
+                            changed = true;
+                        }
+                    }
+                    if (changed) Save(s);
+                    return changed;
+                }
+            }
+            catch { return false; }
+        }
         public static void ClearShareHistory()
         {
             lock (Gate)

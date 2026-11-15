@@ -225,9 +225,22 @@ namespace GeZi
                 e.DataObject = new DataObject(DataFormats.UnicodeText, url);
 
                 // 文案里带提取码时顺手填上（用户看得见"用了什么码"，解析失败时好排查）
+                // 🚨 2026-11-15：以前**只**用夸克/UC 的 ShareUrlParser 提取提取码，
+                //    迅雷/阿里链接里的 ?pwd=xxx（以及文案里的「提取码：xxxx」）压根抠不出来，
+                //    粘贴后框里是空的 → 解析报「该迅雷分享需要提取码」。
+                //    这里补上 PanUrlParser（它按四家域名认链接，提取码规则也更全）。
+                string pastedPasscode = "";
                 var info2 = ShareUrlParser.Parse(text);
-                if (!string.IsNullOrEmpty(info2.Passcode) && string.IsNullOrEmpty(PassBox.Text.Trim()))
-                    PassBox.Text = info2.Passcode;
+                if (!string.IsNullOrEmpty(info2.Passcode))
+                    pastedPasscode = info2.Passcode;
+                else
+                {
+                    var panInfo = PanUrlParser.Parse(text);
+                    if (panInfo != null && !string.IsNullOrEmpty(panInfo.Passcode))
+                        pastedPasscode = panInfo.Passcode;
+                }
+                if (!string.IsNullOrEmpty(pastedPasscode) && string.IsNullOrEmpty(PassBox.Text.Trim()))
+                    PassBox.Text = pastedPasscode;
             }
             catch { /* 粘贴绝不因为这里出错而失败 */ }
         }
