@@ -146,6 +146,16 @@ namespace GeZi
         private void OnMainKeyDown(object sender, KeyEventArgs e)
         {
             if (e.Key != Key.Escape) return;
+            // 🚨 2026-11-15 就地改名（解析历史 / 收藏夹里名字原地变输入框）：
+            //   正在改名字时，Esc 是「取消改名」，**不是**「关掉面板」。
+            //   ⚠️ 这里用的是 PreviewKeyDown（隧道事件，由外往里），
+            //      窗口比输入框**先**收到 Esc —— 所以必须在这里拦下来，
+            //      否则按 Esc 取消改名的同时，整个面板也被关掉了。
+            if (InlineNameEditor.AnyEditing)
+            {
+                e.Handled = true;
+                return;
+            }
             // 🚨 2026-11-15 收藏夹也写了「按 Esc 关闭」，所以两个面板都要认 Esc。
             //   先判收藏夹：它叠在解析历史上层开着的话，先关最上面那个。
             if (FavoriteOpen)

@@ -550,11 +550,24 @@ namespace GeZi
             icon.Child = glyph;
 
             var meta = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            meta.Children.Add(new TextBlock
-            {
-                Text = it.Name ?? "",
-                Style = (Style)FindResource("HistoryNameText"),
-            });
+            // 2026-11-15 用户要求「就地改名」：名字这一块平时是文字，
+            //   右键「重命名」后**原地**变成输入框（光标竖杠 + 全选，直接打字覆盖）。
+            //   点名字本身也能进编辑态（不用右键）。
+            var nameEditor = InlineNameEditor.Create(
+                it.Name ?? "",
+                it.Name ?? "",
+                "HistoryNameText",
+                newName =>
+                {
+                    // 只改「显示名」，pwd_id / 提取码 / 起始 fid 一律不动 ——
+                    // 那是这条记录的身份，改了它就再也点不开了。
+                    if (!HistoryStore.RenameShareHistory(it.PwdId, newName)) return false;
+                    Log("已重命名：" + it.Name + " → " + newName);
+                    NoticeFavorite("已重命名为「" + newName + "」");
+                    return true;
+                },
+                null);
+            meta.Children.Add(nameEditor);
             meta.Children.Add(new TextBlock
             {
                 Text = HistoryMetaOf(it),
@@ -607,13 +620,16 @@ namespace GeZi
                 ToolTip = "重新解析：" + (it.Name ?? ""),
             };
             btn.Click += OnHistoryItemClick;
-            btn.ContextMenu = MakeHistoryMenu(it);
+            btn.ContextMenu = MakeHistoryMenu(it, nameEditor);
+            // 告诉名称控件：外面这层按钮就是「整行可点」的那个
+            //   （改名期间要把它的点击摘掉，否则改个名会被当成「重新打开这条」）。
+            nameEditor.AttachHostButton(btn, OnHistoryItemClick);
             return btn;
         }
 
 
-        /// <summary>行上右键：置顶 / 取消置顶、删除这条记录。</summary>
-        private ContextMenu MakeHistoryMenu(ShareHistoryEntry it)
+        /// <summary>行上右键：置顶 / 取消置顶、重命名、收藏、删除这条记录。</summary>
+        private ContextMenu MakeHistoryMenu(ShareHistoryEntry it, InlineNameEditor nameEditor)
         {
             // ⚠️ 菜单项是**每次重建行时新建**的，所以 Header 直接按当前状态定；
             //    操作完都会 RebuildHistoryPanel()，标签跟着刷新（不用做双向绑定）。
@@ -650,28 +666,15 @@ namespace GeZi
             // 2026-11-15 用户要求：解析历史里的条目可以右键重命名。
             //   只改「显示名」，pwd_id / 提取码 / 起始 fid 一律不动 —— 那是这条记录的身份，
             //   改了它就再也点不开了（点开靠的是 pwd_id）。
+            //   ⚠️ 是**就地编辑**（名字原地变输入框、光标竖杠 + 全选），不是弹框
+            //      （用户原话：「在名字那里应该会显示鼠标光标的竖杠来表示这个地方可以修改了」）。
             var rename = new MenuItem { Header = "重命名", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
             rename.Click += (s, e) =>
             {
                 try
                 {
-                    string newName = TextInputDialog.Ask(this, "重命名", "给这条记录起个新名字", it.Name);
-                    if (string.IsNullOrEmpty(newName)) return;
-                    string trimmed = newName.Trim();
-                    if (trimmed.Length == 0)
-                    {
-                        NoticeFavorite("名字不能为空");
-                        return;
-                    }
-                    if (HistoryStore.RenameShareHistory(it.PwdId, trimmed))
-                    {
-                        RebuildHistoryPanel();
-                        Log("已重命名：" + it.Name + " → " + trimmed);
-                    }
-                    else
-                    {
-                        NoticeFavorite("重命名没成功，请再试一次");
-                    }
+                    if (nameEditor == null) return;
+                    nameEditor.BeginEdit();
                 }
                 catch (Exception ex) { Log("重命名失败: " + ex.Message); }
             };

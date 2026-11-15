@@ -184,11 +184,25 @@ namespace GeZi
             icon.Child = glyph;
 
             var meta = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
-            meta.Children.Add(new TextBlock
-            {
-                Text = it.IsFile ? (it.Name ?? "") : (panName + " 分享"),
-                Style = (Style)FindResource("HistoryNameText"),
-            });
+            // 2026-11-15 用户要求「就地改名」：名字这一块平时是文字，
+            //   右键「重命名」后**原地**变成输入框（光标竖杠 + 全选，直接打字覆盖）。
+            //   点名字本身也能进编辑态（不用右键）。
+            //   收藏的是「分享」时显示的是网盘名（如「夸克网盘 分享」），
+            //   真正要改的其实是这条收藏自己的名字（it.Name）—— 所以编辑态里放 it.Name。
+            var nameEditor = InlineNameEditor.Create(
+                it.IsFile ? (it.Name ?? "") : (panName + " 分享"),
+                it.IsFile ? (it.Name ?? "") : (it.Name ?? panName),
+                "HistoryNameText",
+                newName =>
+                {
+                    // 只改显示名，ShareId / RelDir / Fid 一律不动 —— 那是这条收藏的身份。
+                    if (!FavoriteStore.Rename(it, newName)) return false;
+                    Log("已重命名收藏：" + it.Name + " → " + newName);
+                    NoticeFavorite("已重命名为「" + newName + "」");
+                    return true;
+                },
+                null);
+            meta.Children.Add(nameEditor);
             meta.Children.Add(new TextBlock
             {
                 Text = FavoriteMetaOf(it),
@@ -219,7 +233,10 @@ namespace GeZi
                     : "重新打开这个分享",
             };
             btn.Click += OnFavoriteItemClick;
-            btn.ContextMenu = MakeFavoriteMenu(it);
+            btn.ContextMenu = MakeFavoriteMenu(it, nameEditor);
+            // 告诉名称控件：外面这层按钮就是「整行可点」的那个
+            //   （改名期间要把它的点击摘掉，否则改个名会被当成「重新打开这条」）。
+            nameEditor.AttachHostButton(btn, OnFavoriteItemClick);
             return btn;
         }
 
@@ -240,8 +257,8 @@ namespace GeZi
             return sb.ToString();
         }
 
-        /// <summary>行上右键：删除这条收藏。</summary>
-        private ContextMenu MakeFavoriteMenu(FavoriteEntry it)
+        /// <summary>行上右键：重命名、删除这条收藏。</summary>
+        private ContextMenu MakeFavoriteMenu(FavoriteEntry it, InlineNameEditor nameEditor)
         {
             var menu = new ContextMenu();
 
@@ -262,28 +279,14 @@ namespace GeZi
 
             // 2026-11-15 用户要求：收藏夹里的条目也能右键重命名。
             //   只改显示名，ShareId / RelDir / Fid 一律不动 —— 那是这条收藏的身份。
+            //   ⚠️ 是**就地编辑**（名字原地变输入框、光标竖杠 + 全选），不是弹框。
             var rename = new MenuItem { Header = "重命名", Style = Application.Current.TryFindResource("TrayMenuItem") as Style };
             rename.Click += (s, e) =>
             {
                 try
                 {
-                    string newName = TextInputDialog.Ask(this, "重命名", "给这条收藏起个新名字", it.Name);
-                    if (string.IsNullOrEmpty(newName)) return;
-                    string trimmed = newName.Trim();
-                    if (trimmed.Length == 0)
-                    {
-                        NoticeFavorite("名字不能为空");
-                        return;
-                    }
-                    if (FavoriteStore.Rename(it, trimmed))
-                    {
-                        RebuildFavoritePanel();
-                        Log("已重命名收藏：" + it.Name + " → " + trimmed);
-                    }
-                    else
-                    {
-                        NoticeFavorite("重命名没成功，请再试一次");
-                    }
+                    if (nameEditor == null) return;
+                    nameEditor.BeginEdit();
                 }
                 catch (Exception ex) { Log("重命名收藏失败: " + ex.Message); }
             };
