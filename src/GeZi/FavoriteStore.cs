@@ -79,6 +79,18 @@ namespace GeZi
         /// </para>
         /// </summary>
         [DataMember(Order = 11)] public string Fid { get; set; }
+
+        /// <summary>
+        /// 这条收藏指向的分享**是否还有效**（0 未知 / 1 有效 / 2 失效）。
+        /// <para>
+        /// 收藏的是某个**文件**时，失效判断针对它所在的**分享**——
+        /// 我们只做分享级的轻量探测（换一次凭证），不做文件级请求。
+        /// </para>
+        /// </summary>
+        [DataMember(Order = 12)] public int Validity { get; set; }
+
+        /// <summary>上面那次结论的时刻（"yyyy-MM-dd HH:mm:ss"），用来做缓存有效期。</summary>
+        [DataMember(Order = 13)] public string ValidityAt { get; set; }
     }
 
     /// <summary>
@@ -291,6 +303,51 @@ namespace GeZi
                 Save(st);
                 return true;
             }
+        }
+
+        /// <summary>
+        /// 一条收藏的「失效结论」的键。
+        /// <para>
+        /// 同一个分享下可以存在多条收藏（收藏的是不同文件、或改了名又收藏一次），
+        /// 它们共享同一个分享，所以**探测一次、结论共用**。
+        /// </para>
+        /// </summary>
+        public static string ValidityKey(int panKind, string shareId)
+        {
+            return panKind + "|" + (shareId ?? "");
+        }
+
+        /// <summary>
+        /// 把一批「分享是否还有效」的结论落盘（0 未知 / 1 有效 / 2 失效）。
+        /// <para>
+        /// 与 <see cref="HistoryStore.SetShareValidity"/> 同一套做法：一批结论只写一次盘，
+        /// 免得打开一次收藏面板就把 favorites.json 重写十几遍。
+        /// </para>
+        /// </summary>
+        public static void SetValidity(IDictionary<string, int> results)
+        {
+            if (results == null || results.Count == 0) return;
+            try
+            {
+                lock (Gate)
+                {
+                    var st = Load();
+                    string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                    bool changed = false;
+                    foreach (var it in st.Items)
+                    {
+                        if (it == null) continue;
+                        int v;
+                        if (!results.TryGetValue(ValidityKey(it.PanKind, it.ShareId), out v)) continue;
+                        if (it.Validity == v && !string.IsNullOrEmpty(it.ValidityAt)) continue;
+                        it.Validity = v;
+                        it.ValidityAt = now;
+                        changed = true;
+                    }
+                    if (changed) Save(st);
+                }
+            }
+            catch { }
         }
 
         /// <summary>清空全部收藏。</summary>

@@ -27,6 +27,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -124,6 +125,8 @@ namespace GeZi
         {
             if (FavoriteListPanel == null) return;
             FavoriteListPanel.Children.Clear();
+            _favoriteBadges.Clear();      // 行是重新造的，旧标签引用全部作废
+            int gen = ++_favoriteGen;
 
             var items = FavoriteStore.GetAll();
             if (FavoriteCountText != null)
@@ -142,6 +145,202 @@ namespace GeZi
             // 新的在前（GetAll 已按时间正序，这里倒着铺，最新的在顶上）。
             for (int i = items.Count - 1; i >= 0; i--)
                 FavoriteListPanel.Children.Add(MakeFavoriteRow(items[i]));
+
+            // 行造完再后台校验失效（不 await：面板先出来，标签随后自己冒出来）。
+            _ = ProbeFavoriteValidityAsync(gen);
+        }
+
+
+        // ---------------- 收藏夹：失效校验（2026-11-15 补） ----------------
+
+        /// <summary>面板重建代次：异步校验回来时代次变了就丢弃结果（行已经不在屏幕上了）。</summary>
+        private int _favoriteGen;
+
+        /// <summary>失效标签：ValidityKey → 该分享下所有收藏行的「已失效」标签。</summary>
+        private readonly Dictionary<string, List<Border>> _favoriteBadges = new Dictionary<string, List<Border>>();
+
+        /// <summary>
+        /// 校验收藏夹里的分享**是否还有效**，失效的在行尾打「已失效」标签。
+        /// <para>
+        /// 🚨 2026-11-15 补：解析历史早就有这套检测（<c>ProbeHistoryValidityAsync</c>），
+        /// 收藏夹却一次探针都没发 —— 用户收藏完过一阵再点，链接早没了也不知道。
+        /// 这里照搬历史那套**两阶段**逻辑（阶段一只换凭证、阶段二才列目录），
+        /// 语义也完全一致：
+        /// <list type="bullet">
+        /// <item><b>阶段一</b> <c>IPanProvider.ProbeShareAsync</c>：只换凭证不列目录。
+        ///       服务端明确拒绝 = 确定失效；提取码不对 = 也是失效。</item>
+        /// <item><b>阶段二</b> 只有阶段一判定「还活着」的才列一次目录，
+        ///       看是不是空分享（用户 2026-10-26 明确要求空分享也算失效）。</item>
+        /// </list>
+        /// </para>
+        /// <para>
+        /// 三条纪律与历史那边一致：
+        /// ① **网络故障 ≠ 失效**（连不上就返回 Unknown，不显示标签，绝不瞎标）；
+        /// ② 并发限 3，不把界面线程/网络打满；
+        /// ③ 结论按「网盘 + 分享」缓存 1 小时并**落盘**，重开面板/重启软件立刻能看见。
+        /// </para>
+        /// </summary>
+        private async Task ProbeFavoriteValidityAsync(int gen)
+        {
+            // 按「网盘 + 分享」归组：同一个分享只探一次，组内所有收藏共享结论。
+            var groups = new Dictionary<string, List<FavoriteEntry>>();
+            var order = new List<string>();
+            foreach (var it in FavoriteStore.GetAll())
+            {
+                if (it == null || string.IsNullOrEmpty(it.ShareId)) continue;
+                // 只探我们真的能构造出客户端的四家；别的（将来新增的）宁可不显示标签。
+                if (it.PanKind < (int)PanKind.Quark || it.PanKind > (int)PanKind.Xunlei) continue;
+                string key = FavoriteStore.ValidityKey(it.PanKind, it.ShareId);
+                if (!groups.ContainsKey(key))
+                {
+                    groups[key] = new List<FavoriteEntry>();
+                    order.Add(key);
+                }
+                groups[key].Add(it);
+            }
+            if (groups.Count == 0) return;
+
+            var todo = new List<FavoriteEntry>();
+            foreach (var key in order)
+            {
+                var g = groups[key];
+                // 1 小时内探过就不重复打网盘（结论已落盘在 Validity / ValidityAt）。
+                var first = g[0];
+                if (first.Validity != 0 && FreshEnough(first.ValidityAt)) continue;
+                todo.Add(first);
+            }
+            if (todo.Count == 0) return;
+
+            // 同一家网盘共用一个临时客户端（复用 TLS 连接），别每条都 new 一个。
+            var providers = new Dictionary<int, IPanProvider>();
+            var verdicts = new Dictionary<string, int>();
+            try
+            {
+                using (var gate = new SemaphoreSlim(3))
+                {
+                    var tasks = new List<Task>();
+                    foreach (var it in todo)
+                    {
+                        var entry = it;
+                        tasks.Add(Task.Run(async () =>
+                        {
+                            await gate.WaitAsync().ConfigureAwait(false);
+                            // 0 = 判断不了（网络问题，不落盘、不显示标签）；1 = 有效；2 = 失效。
+                            int verdict = 0;
+                            try
+                            {
+                                IPanProvider p;
+                                lock (providers)
+                                {
+                                    if (!providers.TryGetValue(entry.PanKind, out p))
+                                    {
+                                        p = BuildProbeProvider((PanKind)entry.PanKind);
+                                        providers[entry.PanKind] = p;
+                                    }
+                                }
+                                if (p == null) return;
+
+                                var shareRef = new PanShareRef
+                                {
+                                    Kind = (PanKind)entry.PanKind,
+                                    ShareId = entry.ShareId,
+                                    Passcode = entry.Passcode ?? "",
+                                    StartFid = string.IsNullOrEmpty(entry.StartFid) ? "0" : entry.StartFid,
+                                };
+
+                                // 阶段一：只换凭证，不列目录。
+                                var probe = await p.ProbeShareAsync(shareRef).ConfigureAwait(false);
+                                if (probe == null) return;
+                                if (probe.IsInvalid)
+                                {
+                                    verdict = 2;   // 服务端明确拒绝 = 确定失效
+                                }
+                                else if (probe.IsAlive)
+                                {
+                                    // 阶段二：只有「还活着」的才列一次目录，看是不是空分享。
+                                    try
+                                    {
+                                        var files = await p.ListShareAsync(shareRef, shareRef.StartFid)
+                                            .ConfigureAwait(false);
+                                        verdict = (files != null && files.Count > 0) ? 1 : 2;
+                                    }
+                                    catch (QuarkApiException)
+                                    {
+                                        // 服务端明确拒绝（分享被删 / 子目录没了）= 失效。
+                                        verdict = 2;
+                                    }
+                                    catch
+                                    {
+                                        // 网络问题 ≠ 失效，别把好好的链接标红。
+                                        verdict = 0;
+                                    }
+                                }
+                                else
+                                {
+                                    // Unknown：连不上或者需要提取码才能判断 —— 不下结论。
+                                    verdict = 0;
+                                }
+                            }
+                            catch (QuarkApiException)
+                            {
+                                // QuarkApiException 是服务端**明确拒绝**（分享不存在 / 已过期 /
+                                // 提取码被改 / 文件被删），它恰恰是「失效」最硬的证据。
+                                verdict = 2;
+                            }
+                            catch
+                            {
+                                // 剩下的才是真的网络问题（超时 / DNS / 断网 / TLS）。
+                                // 这种情况不能算「失效」，否则断网时整列收藏都会变红 —— 那是说谎。
+                                verdict = 0;
+                            }
+                            finally
+                            {
+                                gate.Release();
+                            }
+
+                            if (verdict == 0) return;
+                            string vkey = FavoriteStore.ValidityKey(entry.PanKind, entry.ShareId);
+                            lock (verdicts) verdicts[vkey] = verdict;
+                            if (verdict == 1) return;
+
+                            // 回到 UI 线程改标签；代次变了说明面板已经重建，这一行作废。
+                            try
+                            {
+                                // 用 `_ =` 丢掉 DispatcherOperation：它在 .NET 4.5+ 是可 await 的，
+                                // 不丢弃的话编译器会报 CS4014（本项目要求 0 警告）。
+                                _ = Dispatcher.BeginInvoke(new Action(() =>
+                                {
+                                    if (gen != _favoriteGen) return;
+                                    List<Border> badges;
+                                    if (!_favoriteBadges.TryGetValue(vkey, out badges)) return;
+                                    if (badges == null) return;
+                                    foreach (var b in badges)
+                                    {
+                                        if (b != null) b.Visibility = Visibility.Visible;
+                                    }
+                                }));
+                            }
+                            catch { }
+                        }));
+                    }
+                    await Task.WhenAll(tasks).ConfigureAwait(false);
+                }
+
+                // 一次探测得出的一批结论统一落盘（只写一次 favorites.json）。
+                // 落盘之后重开面板/重启软件都能立刻看到「已失效」，不用再等网络。
+                if (verdicts.Count > 0)
+                {
+                    try { FavoriteStore.SetValidity(verdicts); } catch { }
+                }
+            }
+            finally
+            {
+                foreach (var kv in providers)
+                {
+                    if (kv.Value == null) continue;
+                    try { kv.Value.Dispose(); } catch { }
+                }
+            }
         }
 
         /// <summary>造一行收藏。整行是个 Button，点 = 重新打开那条分享。</summary>
@@ -221,6 +420,32 @@ namespace GeZi
                 Style = (Style)FindResource("HistoryMetaText"),
             });
 
+            // 右上角的「已失效」小标签：面板打开后在后台逐条校验，**失效的才显示**
+            // （校验逻辑见 ProbeFavoriteValidityAsync）。默认收起，避免每行先闪一下灰字。
+            var badgeText = new TextBlock { Text = "已失效", FontSize = 11 };
+            badgeText.SetResourceReference(TextBlock.ForegroundProperty, "DangerBrush");
+            var badge = new Border
+            {
+                CornerRadius = new CornerRadius(6),
+                Padding = new Thickness(7, 2, 7, 3),
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(10, 0, 2, 0),
+                Visibility = Visibility.Collapsed,
+                Child = badgeText,
+            };
+            badge.SetResourceReference(Border.BackgroundProperty, "DangerLightBrush");
+            // 结论已经落盘（FavoriteEntry.Validity），所以**造行时就先摆上**，
+            // 不用再等后台探测 —— 否则每次重开面板都要重跑一遍网络才看得到红标。
+            if (it.Validity == 2) badge.Visibility = Visibility.Visible;
+            string vkey = FavoriteStore.ValidityKey(it.PanKind, it.ShareId);
+            List<Border> badges;
+            if (!_favoriteBadges.TryGetValue(vkey, out badges))
+            {
+                badges = new List<Border>();
+                _favoriteBadges[vkey] = badges;
+            }
+            badges.Add(badge);
+
             // ⚠️ 外层用 Grid 而不是横向 StackPanel：名称那个省略号只在**宽度被约束**时才生效，
             //    StackPanel 会用无限宽去量孩子，长名字就直接撑出去、不截断。
             var row = new Grid { VerticalAlignment = VerticalAlignment.Center };
@@ -229,11 +454,14 @@ namespace GeZi
             {
                 Width = new GridLength(1, GridUnitType.Star),
             });
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
             meta.Margin = new Thickness(12, 0, 0, 0);
             Grid.SetColumn(icon, 0);
             Grid.SetColumn(meta, 1);
+            Grid.SetColumn(badge, 2);
             row.Children.Add(icon);
             row.Children.Add(meta);
+            row.Children.Add(badge);
 
             var btn = new Button
             {
