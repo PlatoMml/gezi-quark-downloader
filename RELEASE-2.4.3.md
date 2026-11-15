@@ -1,4 +1,4 @@
-# 鸽子下载器 v2.5.0
+# 鸽子下载器 v2.4.3
 
 > Windows 10 / 11（x64）｜.NET Framework 4.8｜AGPL-3.0｜作者 Yi Yuan
 
@@ -174,6 +174,6 @@
 
 ## 五、发布包
 
-`GeZi-v2.5.0-win-x64.zip`
+`GeZi-v2.4.3-win-x64.zip`
 
 包内附带 `SHA256SUMS.txt`（逐文件校验和）与 `sbom.json`（软件物料清单）。
