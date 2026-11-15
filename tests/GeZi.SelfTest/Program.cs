@@ -1,4 +1,4 @@
-// GeZi —— 多网盘下载器 (Multi-cloud downloader)
+﻿// GeZi —— 多网盘下载器 (Multi-cloud downloader)
 // Copyright (C) 2026  Yi Yuan
 //
 // This program is free software: you can redistribute it and/or modify
@@ -145,6 +145,7 @@ namespace GeZi.SelfTest
         Run("retry_policy", TestRetryPolicy);
         Run("verify_multi_algorithm", TestVerifyMultiAlgorithm);
         Run("advisor_engine", TestAdvisorEngine);
+        Run("update_asset", TestUpdateAsset);
             }
             catch (Exception ex)
             {
@@ -3948,5 +3949,39 @@ namespace GeZi.SelfTest
                 return "-";
             return s.Length <= max ? s : s.Substring(0, max) + "…";
         }
+
+        /// <summary>
+        /// 更新包附件名的识别规则（2026-11-15）。
+        /// 起因：检查器原来只认 "-win64.zip"，而打包脚本生成的是 "-win-x64.zip"
+        /// ⇒ 一个都匹配不上 ⇒ 永远找不到安装包、也没有直链可下载。
+        /// </summary>
+        private static void TestUpdateAsset()
+        {
+            // 当前打包脚本真正生成的名字（tools/package_release.py）
+            Check("update_asset.win_x64", UpdateAsset.IsWindowsPackage("GeZi-v2.4.3-win-x64.zip"));
+            // 旧命名也要认
+            Check("update_asset.win64", UpdateAsset.IsWindowsPackage("GeZi-v2.4.0-win64.zip"));
+            // 校验文件不是安装包
+            Check("update_asset.not_sha", !UpdateAsset.IsWindowsPackage("GeZi-v2.4.3-win-x64.zip.sha256"));
+            // 前缀不对
+            Check("update_asset.bad_prefix", !UpdateAsset.IsWindowsPackage("Other-v1.0.0-win-x64.zip"));
+            // 空值
+            Check("update_asset.empty", !UpdateAsset.IsWindowsPackage(null));
+            Check("update_asset.empty_str", !UpdateAsset.IsWindowsPackage(""));
+            // 大小写不敏感
+            Check("update_asset.case", UpdateAsset.IsWindowsPackage("gezi-v2.4.3-WIN-X64.ZIP"));
+            // 从列表里挑：跳过 sha256，命中安装包
+            var picked = UpdateAsset.PickPackageName(new[]
+            {
+                "GeZi-v2.4.3-win-x64.zip.sha256",
+                "GeZi-v2.4.3-win-x64.zip",
+            });
+            Check("update_asset.pick", picked == "GeZi-v2.4.3-win-x64.zip", "picked=" + picked);
+            // 挑不到返回 null（调用方据此隐藏「直接下载」按钮）
+            Check("update_asset.pick_null",
+                UpdateAsset.PickPackageName(new[] { "GeZi-v2.4.3-win-x64.zip.sha256" }) == null);
+            Check("update_asset.pick_null_list", UpdateAsset.PickPackageName(null) == null);
+        }
     }
+
 }

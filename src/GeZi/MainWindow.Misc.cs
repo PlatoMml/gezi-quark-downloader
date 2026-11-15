@@ -782,18 +782,34 @@ namespace GeZi
                     return;
                 }
                 if (UpdateService.Settings != null)
-                    UpdateService.Apply(UpdateService.Settings, m, OnUpdateFound);
+                    UpdateService.Apply(UpdateService.Settings, m, null);
 
-                if (UpdateService.HasUpdate && UpdateService.Latest != null)
+                // 🚨🚨 2026-11-15 修「点了检查更新不弹窗」（用户原话：「当有新版本的时候
+                //   我点击检查更新会出现更新弹窗让我能够下载」）：
+                //   原来这里只改了一行状态文字（还写着「已弹出更新提示」，其实什么都没弹），
+                //   真正的更新窗口 UpdatePromptWindow 只在**已废弃的旧关于窗**里被调用过 ⇒
+                //   用户永远看不到更新弹窗，也就没法下载新版本。
+                //   ⇒ 现在真的把更新窗口弹出来。
+                bool newer = m.Version != null && UpdateService.CurrentVersion != null
+                             && m.Version.CompareTo(UpdateService.CurrentVersion) > 0;
+
+                if (newer)
                 {
-                    SetAboutUpdateStatus("发现新版本 v" + UpdateService.Latest.Version.ToString()
-                        + "，已弹出更新提示。", false);
+                    // 🚨 2026-11-15：被忽略过的版本**照样弹窗** ——
+                    //   用户既然主动点了「检查更新」，就是想看更新说明、想下载。
+                    //   以前这里只写一行「你已忽略」，用户还是拿不到下载入口，等于死路。
+                    ShowUpdatePrompt(m);
+
+                    if (UpdateService.HasUpdate)
+                        SetAboutUpdateStatus("已打开更新窗口 v" + m.Version.ToString() + "。", false);
+                    else
+                        SetAboutUpdateStatus("已打开 v" + m.Version.ToString()
+                            + " 的更新窗口（你之前忽略过这个版本）。", false);
+                    return;
                 }
-                else
-                {
-                    SetAboutUpdateStatus("已是最新版本。", false);
-                    Log("已是最新版本。");
-                }
+
+                SetAboutUpdateStatus("已是最新版本。", false);
+                Log("已是最新版本。");
             }
             catch (Exception ex)
             {
@@ -808,6 +824,34 @@ namespace GeZi
                     if (btn != null) { btn.IsEnabled = true; btn.Content = "检查更新"; }
                 }
                 catch { }
+            }
+        }
+
+        /// <summary>
+        /// 弹出「更新可用」窗口（版本对比 + 更新说明 + 直接下载 / 前往下载）。
+        /// 用户在窗口里点了「忽略此版本」才落盘（其它地方不写）。
+        /// </summary>
+        private void ShowUpdatePrompt(GitHubRelease m)
+        {
+            if (m == null) return;
+            try
+            {
+                var prompt = new UpdatePromptWindow(m)
+                {
+                    Owner = this,
+                };
+                prompt.ShowDialog();
+
+                if (prompt.IgnoredByUser && UpdateService.Settings != null)
+                {
+                    UpdateService.IgnoreCurrent(UpdateService.Settings);
+                    SettingsStore.Save(UpdateService.Settings);
+                    SetAboutUpdateStatus("已忽略 v" + m.Version + " 的更新提醒。", false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log("打开更新窗口失败：" + ex.Message);
             }
         }
 

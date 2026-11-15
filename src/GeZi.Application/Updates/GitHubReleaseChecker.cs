@@ -132,16 +132,21 @@ namespace GeZi.Services
                             System.Globalization.DateTimeStyles.RoundtripKind, out pub))
                         rel.PublishedAt = pub;
 
-                    // assets 里挑 win64 安装包（发版附件名固定 GeZi-vX.Y.Z-win64.zip）
+                    // assets 里挑 win64 安装包。
+                    // 🚨 2026-11-15 修「永远找不到安装包」：
+                    //   打包脚本 tools/package_release.py 生成的名字是 **GeZi-vX.Y.Z-win-x64.zip**，
+                    //   而这里原来只认 "-win64.zip" ⇒ 一个都匹配不上 ⇒ AssetSize 恒 0、
+                    //   「安装包大小」徽章不显示、也没法给「直接下载」入口。
+                    //   ⇒ 判据统一走 Core 的 UpdateAsset（自检能直接断言），两种命名都认。
+                    //   另外顺手把 browser_download_url 一起取下来（安装包直链）。
                     foreach (var a in NonNull(dto.assets))
                     {
-                        if (a != null && !string.IsNullOrEmpty(a.name)
-                            && a.name.StartsWith("GeZi-v", StringComparison.OrdinalIgnoreCase)
-                            && a.name.EndsWith("-win64.zip", StringComparison.OrdinalIgnoreCase))
-                        {
-                            rel.AssetSize = a.size;
-                            break;
-                        }
+                        if (a == null) continue;
+                        if (!UpdateAsset.IsWindowsPackage(a.name)) continue;
+
+                        rel.AssetSize = a.size;
+                        rel.AssetUrl = a.browser_download_url ?? "";
+                        break;
                     }
                     return rel;
                 }
@@ -174,6 +179,9 @@ namespace GeZi.Services
         {
             [DataMember(Name = "name")] public string name = null;
             [DataMember(Name = "size")] public long size = 0;
+
+            /// <summary>安装包直链（GitHub 附件下载 URL）；取不到为空串。</summary>
+            [DataMember(Name = "browser_download_url")] public string browser_download_url = null;
         }
     }
 }
