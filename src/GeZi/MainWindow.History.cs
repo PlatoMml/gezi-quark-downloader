@@ -561,8 +561,11 @@ namespace GeZi
                 {
                     // 只改「显示名」，pwd_id / 提取码 / 起始 fid 一律不动 ——
                     // 那是这条记录的身份，改了它就再也点不开了。
+                    string oldName = it.Name ?? "";
                     if (!HistoryStore.RenameShareHistory(it.PwdId, newName)) return false;
-                    Log("已重命名：" + it.Name + " → " + newName);
+                    // 同步内存里这条的名字（否则这一行的 ToolTip 一直显示旧名）。
+                    it.Name = newName;
+                    Log("已重命名：" + oldName + " → " + newName);
                     NoticeFavorite("已重命名为「" + newName + "」");
                     return true;
                 },

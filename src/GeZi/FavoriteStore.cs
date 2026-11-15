@@ -278,8 +278,12 @@ namespace GeZi
                     if (!string.Equals(it.ShareId ?? "", entry.ShareId ?? "", StringComparison.Ordinal)) continue;
                     if (it.IsFile != entry.IsFile) continue;
                     if (!string.Equals(it.RelDir ?? "", entry.RelDir ?? "", StringComparison.Ordinal)) continue;
-                    // 改名之后老名字就找不到了，所以这里按「同一个分享 + 同一个目录 + 同类」匹配，
-                    // 不拿 Name 参与匹配（否则永远匹配不上）。
+                    // ⚠️ 这里要拿 **改名前的旧名字** 一起匹配。
+                    //   Add 的去重键是「网盘 + 分享 + 是否文件 + 目录 + **名字**」，
+                    //   所以同一个分享可以存在「名字不同」的两条收藏
+                    //   （例如：先把历史记录改了名，再收藏一次，就会多出一条）。
+                    //   只按前四项匹配会把**两条一起改名** —— 用户只想改其中一条。
+                    if (!string.Equals(it.Name ?? "", entry.Name ?? "", StringComparison.Ordinal)) continue;
                     it.Name = name;
                     changed = true;
                 }

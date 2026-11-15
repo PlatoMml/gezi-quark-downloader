@@ -187,17 +187,29 @@ namespace GeZi
             // 2026-11-15 用户要求「就地改名」：名字这一块平时是文字，
             //   右键「重命名」后**原地**变成输入框（光标竖杠 + 全选，直接打字覆盖）。
             //   点名字本身也能进编辑态（不用右键）。
-            //   收藏的是「分享」时显示的是网盘名（如「夸克网盘 分享」），
-            //   真正要改的其实是这条收藏自己的名字（it.Name）—— 所以编辑态里放 it.Name。
+            // ⚠️ 收藏的是「分享」时，平时显示的是网盘名（如「夸克网盘 分享」），
+            //   但真正要改的是这条收藏自己的名字（it.Name）——
+            //   所以：显示态优先用 it.Name（改名后立刻看得见），
+            //   it.Name 为空（刚收藏、还没名字）时才退回「网盘名 分享」；
+            //   编辑态里放的始终是 it.Name。
+            string displayName = !string.IsNullOrEmpty(it.Name)
+                ? it.Name
+                : (it.IsFile ? "" : (panName + " 分享"));
             var nameEditor = InlineNameEditor.Create(
-                it.IsFile ? (it.Name ?? "") : (panName + " 分享"),
-                it.IsFile ? (it.Name ?? "") : (it.Name ?? panName),
+                displayName,
+                it.Name ?? "",
                 "HistoryNameText",
                 newName =>
                 {
                     // 只改显示名，ShareId / RelDir / Fid 一律不动 —— 那是这条收藏的身份。
+                    string oldName = it.Name ?? "";
                     if (!FavoriteStore.Rename(it, newName)) return false;
-                    Log("已重命名收藏：" + it.Name + " → " + newName);
+                    // ⚠️ 必须把这条收藏对象本身的新名字也更新掉：
+                    //   FavoriteStore.Rename 是按「改名前的名字」定位并写盘的，
+                    //   盘上已经变成新名字了，但内存里这条还是旧名字 ——
+                    //   不更新的话「第二次改名」就再也匹配不上（会误报没成功）。
+                    it.Name = newName;
+                    Log("已重命名收藏：" + oldName + " → " + newName);
                     NoticeFavorite("已重命名为「" + newName + "」");
                     return true;
                 },
