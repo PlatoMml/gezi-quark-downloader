@@ -8,7 +8,7 @@
     <RootNamespace>GeZi.Core</RootNamespace>
     <Product>鸽子下载</Product>
     <AssemblyTitle>鸽子下载</AssemblyTitle>
-    <Version>2.4.0</Version>
+    <Version>2.5.0</Version>
     <!-- 与主程序保持一致：统一 x64。
          纯托管库其实 AnyCPU 也能用，但混用位数是 0x8007000B（"格式不正确"）这类
          错误的温床 —— 主程序曾因默认 AnyCPU 而实际以 32 位运行，
