@@ -159,10 +159,11 @@ namespace GeZi.Providers.Xunlei
             _apiBase = string.IsNullOrEmpty(apiBase) ? XunleiConstants.ApiBase : apiBase.TrimEnd('/');
             _authBase = string.IsNullOrEmpty(authBase) ? XunleiConstants.AuthBase : authBase.TrimEnd('/');
             // 实测必需：不带 device_id 服务端直接报 "device_id is empty"。
-            // 用稳定随机值（同一进程内复用），避免每次请求换设备触发风控。
-            _deviceId = string.IsNullOrEmpty(deviceId)
-                ? Guid.NewGuid().ToString("N")
-                : deviceId;
+            // 🚨 2026-11-15 修：以前这里用随机 GUID 兜底 —— 那是台「不存在」的设备，
+            // 服务端必然判 device not match（实测 captcha_invalid / device not match）。
+            // 现在留空，等取码器把「签发 captcha 的那台设备」连同 captcha 一起带回来，
+            // 两者同源才能过（实测：新设备号 + 过期 captcha = 400，旧设备号 + 新鲜 captcha 也 = 400）。
+            _deviceId = deviceId ?? "";
 
             _handler = new HttpClientHandler
             {
@@ -1221,6 +1222,28 @@ namespace GeZi.Providers.Xunlei
         private async Task<object> SendWithCaptchaAsync(string url, Dictionary<string, string> query,
             HttpMethod method, string jsonBody, CancellationToken cancel)
         {
+            // 🚨 2026-11-15 修：query 里的 device_id 是**构造时拷进去的字符串副本**，
+            // 换掉 _deviceId 之后光重建 URL 并不会更新它 ⇒ 服务端同时看到
+            // header 里新设备号、query 里旧设备号 ⇒ 判 device not match。
+            // 所以每次换设备号都要把 query 里的那份一起改掉。
+            SyncDeviceIdInQuery(query, _deviceId);
+
+            // 设备号为空 ⇒ 第一发就会撞 "device_id is empty"（那不是 captcha_required，
+            // 进不了下面的换盾流程）⇒ 先取一次 captcha，把设备号一起带回来。
+            if (string.IsNullOrEmpty(_deviceId) && CaptchaRefresher != null)
+            {
+                try
+                {
+                    var got0 = await CaptchaRefresher(ResolveClientId()).ConfigureAwait(false);
+                    if (!string.IsNullOrEmpty(got0.deviceId))
+                        _deviceId = got0.deviceId;
+                    if (!string.IsNullOrEmpty(got0.captcha))
+                        _captchaToken = got0.captcha;
+                }
+                catch { }
+                SyncDeviceIdInQuery(query, _deviceId);
+            }
+
             string full = BuildUrl(url, query);
 
             SendOutcome first = await SendOnceAsync(full, method, jsonBody, cancel).ConfigureAwait(false);
@@ -1255,6 +1278,8 @@ namespace GeZi.Providers.Xunlei
                         if (!string.IsNullOrEmpty(got.deviceId))
                         {
                             _deviceId = got.deviceId;
+                            // query 里那份是副本，必须一起换，否则 header 与 query 打架。
+                            SyncDeviceIdInQuery(query, _deviceId);
                             full = BuildUrl(url, query);
                         }
                         altDeviceId = string.IsNullOrEmpty(got.altDeviceId) ? null : got.altDeviceId;
@@ -1287,6 +1312,7 @@ namespace GeZi.Providers.Xunlei
             if (!string.IsNullOrEmpty(altDeviceId) && altDeviceId != _deviceId)
             {
                 _deviceId = altDeviceId;
+                SyncDeviceIdInQuery(query, _deviceId);
                 full = BuildUrl(url, query);
                 SendOutcome third = await SendOnceAsync(full, method, jsonBody, cancel).ConfigureAwait(false);
                 if (!third.NeedsCaptcha)
@@ -1604,6 +1630,21 @@ namespace GeZi.Providers.Xunlei
             {
                 return "/";
             }
+        }
+
+        /// <summary>
+        /// 把 <c>query</c> 里那份 device_id 副本同步成当前的 <see cref="_deviceId"/>。
+        /// <para>
+        /// 🚨 2026-11-15：<c>query</c> 是构造时按值拷进去的，改 <c>_deviceId</c> 不会改到它。
+        /// 不同步的话，请求头是新设备号、URL 里是旧设备号，服务端直接判 device not match。
+        /// </para>
+        /// </summary>
+        private static void SyncDeviceIdInQuery(Dictionary<string, string> query, string deviceId)
+        {
+            if (query == null || string.IsNullOrEmpty(deviceId))
+                return;
+            if (query.ContainsKey(XunleiConstants.DeviceIdParam))
+                query[XunleiConstants.DeviceIdParam] = deviceId;
         }
 
         private static string BuildUrl(string baseUrl, Dictionary<string, string> query)

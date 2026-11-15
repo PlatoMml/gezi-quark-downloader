@@ -845,7 +845,7 @@ namespace GeZi.SelfTest
                 return new MockHttpServer.MockResponse("{\"error\":\"unexpected\"}");
             }))
             {
-                using (var xl = new XunleiClient("PANTOK", "CAPTOK", server.BaseUrl))
+                using (var xl = new XunleiClient("PANTOK", "CAPTOK", server.BaseUrl, "DEV1"))
                 {
                     var shareRef = new PanShareRef
                     {
