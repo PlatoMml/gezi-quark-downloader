@@ -2053,8 +2053,37 @@
                                          下方大片空白。现在放进右列第三行，与左列「存储」对齐，
                                          两列高度自然一致，整页也不需要滚动条了。 -->
                                     <StackPanel Grid.Row="1" VerticalAlignment="Top">
+                                    <!-- 风控参谋：被动采集真实下载记录，攒够样本后给建议。
+                                         只观察、不主动探测 —— 每次任务结束后记一笔「网盘+线程+峰值速度+是否停滞」，
+                                         攒够 3 次才参谋。点「查看」弹小窗展示，卡片本身只留标题+一行介绍。 -->
                                     <Border Style="{StaticResource SettingsCard}"
                                             Margin="0" HorizontalAlignment="Stretch">
+                                        <StackPanel>
+                                            <Grid Style="{StaticResource SettingsCardHeader}">
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="*"/>
+                                                    <ColumnDefinition Width="Auto"/>
+                                                </Grid.ColumnDefinitions>
+                                                <StackPanel Orientation="Horizontal">
+                                                    <Path Data="{StaticResource IconDiagnostics}" Stretch="Uniform"
+                                                          Width="16" Height="16" VerticalAlignment="Center"
+                                                          Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.7"/>
+                                                    <TextBlock Text="风控参谋" Style="{StaticResource SettingsCardTitle}"
+                                                               Margin="10,0,0,0"/>
+                                                </StackPanel>
+                                                <Button Grid.Column="1" x:Name="AdvisorViewButton" Content="查看"
+                                                        MinWidth="72" Height="30" Padding="14,0"
+                                                        HorizontalAlignment="Right"
+                                                        Style="{StaticResource SecondaryButton}"
+                                                        Click="OnAdvisorViewClick"/>
+                                            </Grid>
+                                            <TextBlock FontSize="12" TextWrapping="Wrap"
+                                                       Foreground="{DynamicResource TextTertiaryBrush}"
+                                                       Text="被动观察真实下载记录，攒够几次后给出各网盘的安全并发建议。"/>
+                                        </StackPanel>
+                                    </Border>
+                                    <Border Style="{StaticResource SettingsCard}"
+                                            Margin="0,12,0,0" HorizontalAlignment="Stretch">
                                         <!-- 🚨 2026-11-14：去掉 VerticalAlignment=Stretch 和 MinHeight=132。
                                              本卡在左列 Row 1（Height=*）里，Stretch 会把它撑到吃满剩余空间，
                                              而内容只有 120px 左右 → 卡片内部下方一大片空白（用户截图指出的问题）。
@@ -2144,35 +2173,6 @@
                                         </StackPanel>
                                     </Border>
 
-                                    <!-- 风控参谋：被动采集真实下载记录，攒够样本后给建议。
-                                         只观察、不主动探测 —— 每次任务结束后记一笔「网盘+线程+峰值速度+是否停滞」，
-                                         攒够 3 次才参谋。点「查看」弹小窗展示，卡片本身只留标题+一行介绍。 -->
-                                    <Border Style="{StaticResource SettingsCard}"
-                                            Margin="0,12,0,0" HorizontalAlignment="Stretch">
-                                        <StackPanel>
-                                            <Grid Style="{StaticResource SettingsCardHeader}">
-                                                <Grid.ColumnDefinitions>
-                                                    <ColumnDefinition Width="*"/>
-                                                    <ColumnDefinition Width="Auto"/>
-                                                </Grid.ColumnDefinitions>
-                                                <StackPanel Orientation="Horizontal">
-                                                    <Path Data="{StaticResource IconDiagnostics}" Stretch="Uniform"
-                                                          Width="16" Height="16" VerticalAlignment="Center"
-                                                          Stroke="{DynamicResource TextTertiaryBrush}" StrokeThickness="1.7"/>
-                                                    <TextBlock Text="风控参谋" Style="{StaticResource SettingsCardTitle}"
-                                                               Margin="10,0,0,0"/>
-                                                </StackPanel>
-                                                <Button Grid.Column="1" x:Name="AdvisorViewButton" Content="查看"
-                                                        MinWidth="72" Height="30" Padding="14,0"
-                                                        HorizontalAlignment="Right"
-                                                        Style="{StaticResource SecondaryButton}"
-                                                        Click="OnAdvisorViewClick"/>
-                                            </Grid>
-                                            <TextBlock FontSize="12" TextWrapping="Wrap"
-                                                       Foreground="{DynamicResource TextTertiaryBrush}"
-                                                       Text="被动观察真实下载记录，攒够几次后给出各网盘的安全并发建议。"/>
-                                        </StackPanel>
-                                    </Border>
                                     </StackPanel>
                                     </Grid>
 

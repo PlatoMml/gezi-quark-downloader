@@ -817,7 +817,7 @@ namespace GeZi
         private void ExportLinksFromDialog(Window owner, List<DownloadItem> items,
             LinkExporter.Format format)
         {
-            if (!IsLoggedInAny && _panProvider == null) { Log("请先登录或解析分享"); return; }
+            if (!IsLoggedInAny && _panProvider == null) { NoticeNeedLogin("导出直链需要先登录或解析分享，已为你切到登录页。"); return; }
 
             var list = new List<LinkExporter.Item>();
             int skipped = 0;

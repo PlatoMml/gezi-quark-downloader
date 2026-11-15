@@ -619,42 +619,25 @@ namespace GeZi
 
         /// <summary>
         /// 未登录时使用「必须登录」的功能（下载 / 获取直链等），
-        /// **明确弹框提示**并切到登录页。
-        /// 原来这些入口只往日志里写一行「请先登录或解析分享」—— 日志在界面下方不起眼，
-        /// 用户点了没反应，只会以为程序坏了。
+        /// 用**灵动岛**轻提示（用户 m18669/m18688：所有需登录提示都改走灵动岛，不再弹模态框），
+        /// 并切到登录页。原来这些入口只往日志写一行或弹模态框，用户嫌打断、要点掉。
         /// </summary>
         private bool RequireLogin(string action)
         {
             if (IsLoggedInAny) return true;
 
-            // 🚨 2026-10-26 用户反馈：「我刚进软件就点续传/下载，直接报 401 登录态已失效，
-            //   可我账号明明还没登录完成呢 —— 说好了在没登录成功之前要给提示。」
-            //   根因：启动时会异步恢复上次的登录态（_startupLoginTask），这期间
-            //   IsLoggedInAny 还是 false、_client 还是 null，用户一点就发请求 → 服务端 401。
-            //   这里区分「真的没登录」和「正在恢复」：后者给的是"稍候"，不是"去登录"。
+            // 🚨 2026-10-26：启动异步恢复登录态（_startupLoginTask）期间 IsLoggedInAny 仍为 false，
+            //   用户一点就发请求 → 401。区分「真没登录」和「正在恢复」：后者给"稍候"。
             if (IsLoginPending)
             {
-                try
-                {
-                    AppDialog.Show(this,
-                        "登录态正在恢复中（上次的账号还在校验），请稍等几秒再试。\n\n"
-                        + "这不是登录失败，不需要重新扫码。",
-                        "请稍候", MessageBoxButton.OK, MessageBoxImage.Information);
-                }
-                catch { }
+                // 正在恢复：轻提示「稍候」，不切登录页（不是登录失败）。
+                NoticeNeedLogin("登录态正在恢复中，请稍等几秒再试（不用重新登录）。", false);
                 Log("登录态正在恢复，已跳过本次「" + action + "」。稍等几秒再试即可。");
                 return false;
             }
 
-            try
-            {
-                AppDialog.Show(this,
-                    action + "需要先登录。已为你切到登录页。",
-                    "需要登录", MessageBoxButton.OK, MessageBoxImage.Information);
-            }
-            catch { }
-            // 顺手把用户带到登录页（登录页 = 第 4 个 Tab，索引 3）
-            try { Tabs.SelectedIndex = 3; } catch { }
+            // 真没登录：灵动岛轻提示 + 自动切到登录页（切页持续可见，弥补轻提示会消失）。
+            NoticeNeedLogin(action + "需要先登录，已为你切到登录页。");
             return false;
         }
 
@@ -1339,7 +1322,7 @@ namespace GeZi
         {
             if (!IsLoggedInAny)
             {
-                Log("尚未登录");
+                NoticeNeedLogin("导出凭证需要先登录，已为你切到登录页。");
                 return;
             }
             try

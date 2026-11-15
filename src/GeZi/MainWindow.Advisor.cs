@@ -56,14 +56,20 @@ namespace GeZi
                     ResizeMode = ResizeMode.NoResize,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                 };
-                // 内容很少（一句磁盘说明 + 最多 4 行建议 + 一个关闭按钮），
-                // 用小窗即可，别给大窗口留大片空白（用户 m17940 反馈窗口太大）。
-                DialogChrome.StyleWindow(dlg, 460, 300);
+                // 高度跟着内容走（SizeToContent），不再给固定高度留下方空白（用户 m18669）：
+                // 原来第 2 行是 Star，卡片被拉伸吃满窗口，内容少时下半截纯白。
+                // 现在窗口 Height 自适应内容，卡片行也改 Auto 按内容收缩，空白彻底消掉；
+                // 宽度仍固定 460（StyleWindow 设的），只让高度自适应。
+                DialogChrome.StyleWindow(dlg, 460, 0);
+                dlg.Height = double.NaN;   // 交给 SizeToContent，别留 StyleWindow 设的 40
+                dlg.SizeToContent = SizeToContent.Height;
+                dlg.MinHeight = 220;
 
                 var root = DialogChrome.DialogRoot();
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                    // 磁盘介质说明
-                root.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) }); // 建议列表（可滚动）
-                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });                    // 关闭按钮
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 磁盘介质说明
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 建议列表（按内容收缩）
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 怎么用这些数据
+                root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto }); // 关闭按钮
 
                 var disk = DialogChrome.Hint(DiskMediaText(_settings?.OutDir), 0, 12);
                 Grid.SetRow(disk, 0);
@@ -81,12 +87,20 @@ namespace GeZi
                 Grid.SetRow(card, 1);
                 root.Children.Add(card);
 
+                // 「到底怎么用这些数据」——用户 m18669 要求补上，否则只给一串数字看不懂。
+                var usage = DialogChrome.Hint(
+                    "怎么用：把「建议 X~Y 路」填进「设置 → 网盘线程」里对应网盘的连接数；"
+                    + "「红线」是这台机器曾经卡过的档位，别超过它。"
+                    + "数据只来自你自己下载完成的记录，攒得越多越准。", 12, 0);
+                Grid.SetRow(usage, 2);
+                root.Children.Add(usage);
+
                 var closeBtn = DialogChrome.PrimaryButton("关闭");
                 closeBtn.MinWidth = 96;
                 closeBtn.Click += (s2, e2) => dlg.Close();
                 var btns = DialogChrome.ButtonRow(closeBtn);
                 btns.Margin = new Thickness(0, 14, 0, 0);
-                Grid.SetRow(btns, 2);
+                Grid.SetRow(btns, 3);
                 root.Children.Add(btns);
 
                 dlg.Content = root;

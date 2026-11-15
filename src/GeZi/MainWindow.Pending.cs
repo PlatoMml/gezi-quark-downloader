@@ -1403,13 +1403,7 @@ namespace GeZi
             //   会用到它，必须保证传进去的是**同 kind** 的实例（见该方法的实现）。
             if (client == null && !IsLoggedInAny)
             {
-                Log("续传需要先登录。请登录后重新下载（进度记录在，会自然续传）。");
-                AppDialog.Show(this,
-                    "续传需要重新获取直链，得先登录。\n\n"
-                    + "进度记录都还在，登录后再点一次「继续下载」即可，不会重下。",
-                    "需要先登录",
-                    System.Windows.MessageBoxButton.OK,
-                    System.Windows.MessageBoxImage.Information);
+                NoticeNeedLogin("续传需要先登录，进度记录都在，登录后继续即可。");
                 return;
             }
 
@@ -1586,6 +1580,7 @@ namespace GeZi
                             if (client == null)
                             {
                                 Log("[" + p.Name + "] 这条是夸克分享，需要夸克登录态才能续传，已跳过。");
+                                NoticeNeedLogin("这条是夸克分享，需要夸克登录态才能续传。", false);
                                 skipped.Add(p.Name ?? "?");
                                 continue;
                             }
@@ -1641,6 +1636,7 @@ namespace GeZi
                             {
                                 Log("[" + p.Name + "] 需要 " + PanUrlParser.DisplayNameOf(kind)
                                     + " 登录态才能续传，已跳过。");
+                                NoticeNeedLogin("需要 " + PanUrlParser.DisplayNameOf(kind) + " 登录态才能续传。", false);
                                 skipped.Add(p.Name ?? "?");
                                 continue;
                             }
@@ -1773,15 +1769,9 @@ namespace GeZi
                     // 有跳过项时说明记录还在，用户可以从「未完成 N」入口再试一次。
                     if (skipped.Count > 0)
                     {
-                        // 模态框必须在主线程弹（上面有 ConfigureAwait(false)）。
                         int n = skipped.Count;
-                        RunOnUi(() => AppDialog.Show(this,
-                            string.Format("这 {0} 个任务这次都没能取到直链。\n\n"
-                                + "记录和进度都保留着，登录后点任务页的「未完成」入口可以再试一次，"
-                                + "不会从头重下。", n),
-                            "没能开始续传",
-                            System.Windows.MessageBoxButton.OK,
-                            System.Windows.MessageBoxImage.Warning));
+                        NoticeNeedLogin(string.Format(
+                            "这 {0} 个任务需要登录对应网盘才能续传，记录和进度都在，登录后可再试一次。", n));
                     }
                     return;
                 }
