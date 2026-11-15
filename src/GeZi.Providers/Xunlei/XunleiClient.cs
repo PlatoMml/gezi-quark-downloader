@@ -69,9 +69,21 @@ namespace GeZi.Providers.Xunlei
         /// 网页签名是一层层混淆函数，纯算法复现不划算，所以交给 WebView2
         /// 让网页自己生成（refs/YunX 的做法）。
         /// </para>
-        /// <para>返回 <c>(captcha, deviceId)</c>；<c>deviceId</c> 非空时替换当前设备标识。</para>
+        /// <para>
+        /// 入参 <c>clientId</c>：当前 pan_token 声明的 client_id（token 的 aud），
+        /// 取码器要按它去读网页 localStorage 里的 <c>captcha_&lt;clientId&gt;</c>。
+        /// 写死默认 client_id 会在 aud 不是它的时候读不到对应体系的 captcha。
+        /// </para>
+        /// <para>
+        /// 返回 <c>(captcha, deviceId, altDeviceId)</c>：
+        /// captcha 非空时替换当前验证码；
+        /// deviceId 非空时替换当前设备标识；
+        /// altDeviceId 是备用设备号 —— 网页把设备号同时写在 localStorage 和 Cookie 里，
+        /// 两份不是同一个值，服务端到底认哪一份取决于 captcha 是用哪份签的，
+        /// 所以第一次失败后要能换另一份再试。
+        /// </para>
         /// </summary>
-        public Func<Task<(string captcha, string deviceId)>> CaptchaRefresher;
+        public Func<string, Task<(string captcha, string deviceId, string altDeviceId)>> CaptchaRefresher;
 
         private readonly string _panToken;
         private string _captchaToken;
@@ -1220,6 +1232,7 @@ namespace GeZi.Providers.Xunlei
             // 否则服务端判 "device not match"。
             string action = method.Method + ":" + UrlPathOf(url);
             string fresh = null;
+            string altDeviceId = null;
 
             // 🚨 captcha 盾按 client_id 分体系：网页 token 只认网页 captcha，
             // App（手机号账号登录）token 只认 App captcha。所以先走与 token 同体系的那条，
@@ -1233,7 +1246,9 @@ namespace GeZi.Providers.Xunlei
             {
                 try
                 {
-                    var got = await CaptchaRefresher().ConfigureAwait(false);
+                    // 必须传 token 自己声明的 client_id（aud）：网页 localStorage 里的键名
+                    // 是 captcha_<clientId>，写死默认值在 aud 不是它的时候读不到对应的 captcha。
+                    var got = await CaptchaRefresher(ResolveClientId()).ConfigureAwait(false);
                     if (got.captcha != null && got.captcha.Length > 0)
                     {
                         fresh = got.captcha;
@@ -1242,6 +1257,7 @@ namespace GeZi.Providers.Xunlei
                             _deviceId = got.deviceId;
                             full = BuildUrl(url, query);
                         }
+                        altDeviceId = string.IsNullOrEmpty(got.altDeviceId) ? null : got.altDeviceId;
                     }
                 }
                 catch { }
@@ -1264,6 +1280,19 @@ namespace GeZi.Providers.Xunlei
             SendOutcome second = await SendOnceAsync(full, method, jsonBody, cancel).ConfigureAwait(false);
             if (!second.NeedsCaptcha)
                 return second.Payload;
+
+            // 🚨 网页把设备号同时写在 localStorage 和 Cookie 里，两份不是同一个值。
+            // 服务端判 "device not match" 时认的是「签这个 captcha 时用的那份」，
+            // 所以第一次失败就换另一份设备号再试一次（refs/YunX 用的是 Cookie 那份）。
+            if (!string.IsNullOrEmpty(altDeviceId) && altDeviceId != _deviceId)
+            {
+                _deviceId = altDeviceId;
+                full = BuildUrl(url, query);
+                SendOutcome third = await SendOnceAsync(full, method, jsonBody, cancel).ConfigureAwait(false);
+                if (!third.NeedsCaptcha)
+                    return third.Payload;
+                second = third;
+            }
 
             throw new QuarkApiException("迅雷云盘验证码刷新后仍失败："
                 + Truncate(second.ErrorText, 200));

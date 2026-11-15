@@ -280,7 +280,7 @@ namespace GeZi
                 string raw = LinkBox != null ? LinkBox.Text.Trim() : "";
                 if (string.IsNullOrEmpty(raw))
                 {
-                    NoticeFavorite("输入框里没有内容，没法收藏。");
+                    NoticeFavorite("输入框里没有内容，没法收藏");
                     return;
                 }
 
@@ -304,7 +304,7 @@ namespace GeZi
                     var info = ShareUrlParser.Parse(raw);
                     if (string.IsNullOrEmpty(info.PwdId))
                     {
-                        NoticeFavorite("这段文字里没认出分享链接，收藏不了。");
+                        NoticeFavorite("这段文字里没认出分享链接，收藏不了");
                         return;
                     }
                     kind = _panKind;
@@ -328,12 +328,12 @@ namespace GeZi
                 if (FavoriteStore.Add(entry))
                 {
                     Log("已收藏分享：" + entry.Name + " /s/" + shareId);
-                    NoticeFavorite("已收藏这个分享。");
+                    NoticeFavorite("已收藏这个分享");
                     RebuildFavoritePanel();
                 }
                 else
                 {
-                    NoticeFavorite("这个分享已经在收藏夹里了。");
+                    NoticeFavorite("这个分享已经在收藏夹里了");
                 }
             }
             catch (Exception ex)
@@ -360,14 +360,14 @@ namespace GeZi
                 var sel = FileList != null ? FileList.SelectedItem as ShareFileItem : null;
                 if (sel == null)
                 {
-                    NoticeFavorite("先选中一个文件再收藏。");
+                    NoticeFavorite("先选中一个文件再收藏");
                     return;
                 }
 
                 string shareId = _panShareRef != null ? _panShareRef.ShareId : _pwdId;
                 if (string.IsNullOrEmpty(shareId))
                 {
-                    NoticeFavorite("还没解析出分享，没法收藏文件。");
+                    NoticeFavorite("还没解析出分享，没法收藏文件");
                     return;
                 }
 
@@ -396,12 +396,12 @@ namespace GeZi
                 if (FavoriteStore.Add(entry))
                 {
                     Log("已收藏文件：" + entry.Name);
-                    NoticeFavorite("已收藏这个文件。");
+                    NoticeFavorite("已收藏这个文件");
                     RebuildFavoritePanel();
                 }
                 else
                 {
-                    NoticeFavorite("这个文件已经在收藏夹里了。");
+                    NoticeFavorite("这个文件已经在收藏夹里了");
                 }
             }
             catch (Exception ex)
@@ -482,7 +482,7 @@ namespace GeZi
                         && (f.Name == seg || PathUtil.SanitizeFileName(f.Name ?? "") == seg));
                     if (dir == null)
                     {
-                        NoticeFavorite("收藏的文件所在目录找不到了，链接可能已经变了。");
+                        NoticeFavorite("收藏的文件所在目录找不到了，链接可能已经变了");
                         return;
                     }
                     _fidStack.Push(_curFid);
@@ -504,7 +504,7 @@ namespace GeZi
                         && PathUtil.SanitizeFileName(f.Name ?? "") == PathUtil.SanitizeFileName(fileName ?? ""));
                 if (item == null)
                 {
-                    NoticeFavorite("这个目录里没找到收藏的那个文件。");
+                    NoticeFavorite("这个目录里没找到收藏的那个文件");
                     return;
                 }
                 try

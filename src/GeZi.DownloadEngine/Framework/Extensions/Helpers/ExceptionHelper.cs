@@ -43,28 +43,15 @@ internal static class ExceptionHelper
     /// 只认传输层特征，绝不因为 Message 里出现「写」就判是磁盘 —— .NET 的
     /// "无法从传输连接中读取数据: 连接已关闭。" 恰好同时含「连接」和「传输」，很容易误伤。
     /// </para>
+    /// <para>
+    /// 🚨 2026-11-15：判据表**只有一份**，在 <c>GeZi.Core.Support.RetryPolicy</c> 里。
+    /// 原来这里自己抄了一份，两边已经漂移（Core 那份多了 "unexpectedly"、这份没有，
+    /// 中文「从传输流收到意外的 EOF」两边都认不出来）⇒ 同一个异常在引擎层和融合层
+    /// 得到两种归因。现在直接转发，避免再漂移。
+    /// </para>
     /// </summary>
-    internal static bool IsTransportIo(this Exception error)    {
-        // 内层是 Socket/Web 异常 ⇒ 一定是网络
-        if (error.HasTypeOf(typeof(WebException), typeof(SocketException)))
-            return true;
-
-        string msg = error.Message ?? "";
-        if (msg.Length == 0)
-            return false;
-
-        // 明确的传输层断开特征（.NET Framework / OpenSSL 桥两套说法都覆盖）
-        if (msg.IndexOf("传输连接", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("连接已关闭", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("远程主机强迫关闭", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("已意外停止", StringComparison.OrdinalIgnoreCase) >= 0) return true;   // OpenSSL SSL_ERROR_SYSCALL
-        if (msg.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("OpenSSL", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("underlying connection was closed", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-        if (msg.IndexOf("forcibly closed", StringComparison.OrdinalIgnoreCase) >= 0) return true;
-
-        return false;
-    }
+    internal static bool IsTransportIo(this Exception error) =>
+        GeZi.Core.Support.RetryPolicy.IsTransportIo(error);
 
     internal static bool HasTypeOf(this Exception exp, params Type[] types)
     {

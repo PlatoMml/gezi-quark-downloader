@@ -234,9 +234,9 @@ namespace GeZi.Providers.Shared
         {
             var raw = (text ?? "").Trim();
             if (raw.Length == 0)
-                return Fail("口令是空的。");
+                return Fail("口令是空的");
             if (raw.Length > MaxCommandLength)
-                return Fail("这段话太长了，不像口令。");
+                return Fail("这段话太长了，不像口令");
 
             ShareCommandResult last = null;
 
@@ -274,7 +274,7 @@ namespace GeZi.Providers.Shared
         {
             var keyword = Normalize(text);
             if (keyword.Length == 0)
-                return Fail("口令是空的。");
+                return Fail("口令是空的");
 
             var url = XunleiJumpApi
                       + "?noredirect=1&t=20&wd=" + Uri.EscapeDataString(keyword)
@@ -301,7 +301,7 @@ namespace GeZi.Providers.Shared
                                    .ConfigureAwait(false))
                         {
                             if (!resp.IsSuccessStatusCode)
-                                return Fail("迅雷口令解析失败（HTTP " + (int)resp.StatusCode + "）。");
+                                return Fail("迅雷口令解析失败（HTTP " + (int)resp.StatusCode + "）");
                             body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
                         }
                     }
@@ -314,7 +314,7 @@ namespace GeZi.Providers.Shared
             catch (Exception ex)
             {
                 // 只记类型不记口令内容
-                return Fail("迅雷口令解析失败（" + ex.GetType().Name + "）。");
+                return Fail("迅雷口令解析失败（" + ex.GetType().Name + "）");
             }
 
             var root = PanJson.Deserialize(body);
@@ -327,14 +327,14 @@ namespace GeZi.Providers.Shared
 
             if (!string.IsNullOrEmpty(koulingType)
                 && !koulingType.Equals("share_page", StringComparison.OrdinalIgnoreCase))
-                return Fail("这条口令不是网盘分享口令。");
+                return Fail("这条口令不是网盘分享口令");
 
             if (string.IsNullOrEmpty(location))
-                return Fail("这条迅雷口令没有对应的网盘分享。");
+                return Fail("这条迅雷口令没有对应的网盘分享");
 
             var idM = XunleiShareIdInLocation.Match(location);
             if (!idM.Success)
-                return Fail("这条迅雷口令没有对应的网盘分享。");
+                return Fail("这条迅雷口令没有对应的网盘分享");
 
             var passcode = "";
             var pwdM = XunleiPasscodeInLocation.Match(location);
@@ -396,21 +396,21 @@ namespace GeZi.Providers.Shared
             }
             catch (Exception ex)
             {
-                return Fail("口令解析服务没连上（" + ex.GetType().Name + "）。");
+                return Fail("口令解析服务没连上（" + ex.GetType().Name + "）");
             }
 
             if (code == 429)
-                return Fail("口令解析服务限流了，请稍后再试。");
+                return Fail("口令解析服务限流了，请稍后再试");
             if (code == 401)
-                return Fail("口令解析服务鉴权失败（服务商的 Key 可能换了）。");
+                return Fail("口令解析服务鉴权失败（服务商的 Key 可能换了）");
             if (code == 413)
-                return Fail("这段话太长了，口令最长 120 字。");
+                return Fail("这段话太长了，口令最长 120 字");
             if (code == 400)
-                return Fail("这段文字不是有效的口令。");
+                return Fail("这段文字不是有效的口令");
             if (code == 404)
-                return Fail("口令解析服务暂时不可用。");
+                return Fail("口令解析服务暂时不可用");
             if (code < 200 || code >= 300)
-                return Fail("口令解析失败（HTTP " + code + "）。");
+                return Fail("口令解析失败（HTTP " + code + "）");
 
             var root = PanJson.Deserialize(body);
             var dict = PanJson.AsDict(root);
@@ -424,7 +424,7 @@ namespace GeZi.Providers.Shared
             {
                 if (!string.IsNullOrEmpty(msg))
                     return Fail(msg);
-                return Fail("口令解析服务没认出这条口令。");
+                return Fail("口令解析服务没认出这条口令");
             }
 
             PanKind kind;

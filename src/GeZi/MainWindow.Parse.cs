@@ -69,7 +69,7 @@ namespace GeZi
             if (!ShareCommandResolver.LooksLikeCommand(text))
             {
                 Log("输入的既不是分享链接也不是口令，已忽略。");
-                NoticeParse("请输入分享链接或口令。");
+                NoticeParse("请输入分享链接或口令");
                 return;
             }
 
@@ -84,7 +84,7 @@ namespace GeZi
                 {
                     string reason = (r != null && !string.IsNullOrEmpty(r.Reason))
                         ? r.Reason
-                        : "这条口令没能解析出分享链接。";
+                        : "这条口令没能解析出分享链接";
                     Log("口令解析失败：" + reason + "（口令长度 " + (text ?? "").Trim().Length + " 字）。");
                     NoticeParse(reason);
                     return;
@@ -101,7 +101,7 @@ namespace GeZi
                 if (!string.IsNullOrEmpty(r.Passcode) && PassBox != null)
                     PassBox.Text = r.Passcode;
 
-                NoticeParse("口令已解析，正在打开分享…");
+                NoticeParse("口令已解析，正在打开分享");
                 // alreadyBusy=true：这个按钮的忙态是本方法开的，别让 ParseShareCoreAsync
                 // 再 BeginBusy 一次（它见到按钮已在忙会直接 return，等于口令解析白跑）。
                 await ParseShareCoreAsync(true).ConfigureAwait(true);
@@ -109,7 +109,7 @@ namespace GeZi
             catch (Exception ex)
             {
                 Log("口令解析出错: " + ex.Message);
-                NoticeParse("口令解析失败，请稍后再试。");
+                NoticeParse("口令解析失败，请稍后再试");
             }
             finally
             {

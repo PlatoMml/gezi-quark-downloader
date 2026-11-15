@@ -1800,6 +1800,19 @@ namespace GeZi.SelfTest
                 !GeZi.Core.Support.RetryPolicy.IsTransportIo(null),
                 "null 不能判成网络异常");
 
+            // 🚨 2026-11-15：.NET Framework 中文版 ConnectStream 的原文是
+            // 「从传输流收到意外的 EOF」—— 英文原版才是 "unexpectedly"，
+            // 之前只认英文 ⇒ 这类断开被套上「写盘失败：」前缀并直接判死任务。
+            var unexpectedEof = new System.IO.IOException(
+                "从传输流收到意外的 EOF。");
+            Check("retry.unexpected_eof_is_transport",
+                GeZi.Core.Support.RetryPolicy.IsTransportIo(unexpectedEof),
+                "「从传输流收到意外的 EOF」必须判为网络断开（不能当成写盘失败）");
+            Check("retry.eof_message_retryable",
+                GeZi.Core.Support.RetryPolicy.IsRetryableFailure(
+                    "下载中断：网络连接被服务端或中间设备断开（从传输流收到意外的 EOF。）。已下载部分会保留，可直接重试续传。"),
+                "提前 EOF 归因成网络断开后必须可重试");
+
             // ============ 值不值得重试 ============
             Check("retry.empty_message_retryable",
                 GeZi.Core.Support.RetryPolicy.IsRetryableFailure(""),

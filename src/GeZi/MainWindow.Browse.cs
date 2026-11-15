@@ -320,7 +320,7 @@ namespace GeZi
             if (string.IsNullOrEmpty(url))
             {
                 Log("请先粘贴分享链接");
-                NoticeParse("请输入分享链接或口令。");
+                NoticeParse("请输入分享链接或口令");
                 return;
             }
 
@@ -435,8 +435,8 @@ namespace GeZi
                     Log("获取分享凭证失败（可能需登录或提取码错误）");
                     // 链接/口令解析不出来，界面上一律给这一句 —— 不再让用户面对
                     // 「到底是链接坏了、码错了，还是没登录」这种分不清的情况。
-                    NoticeParse("链接已失效或网络故障。");
-                    NoticeNeedLogin("获取分享凭证失败，可能需要登录或提取码不对。", false);
+                    NoticeParse("链接已失效或网络故障");
+                    NoticeNeedLogin("获取分享凭证失败，可能需要登录或提取码不对", false);
                     NotifyIfHidden("自动解析失败",
                         "获取分享凭证失败，可能需要登录，或分享提取码不正确。");
                     return;
@@ -455,11 +455,11 @@ namespace GeZi
                 {
                     // 分享能打开、但当前目录一个文件都没有 —— 用户看到的还是"没东西"。
                     // 提示要区分两种情况：目录真的是空的 vs 链接其实已经失效。
-                    NoticeParse("链接已失效或网络故障。");
+                    NoticeParse("链接已失效或网络故障");
                 }
                 else
                 {
-                    NoticeParse("解析成功，共 " + _files.Count + " 个文件。");
+                    NoticeParse("解析成功，共 " + _files.Count + " 个文件");
                 }
                 NotifyIfHidden("已解析剪贴板里的分享链接",
                     _files.Count > 0
@@ -469,7 +469,7 @@ namespace GeZi
             catch (Exception ex)
             {
                 Log("解析失败: " + ex.Message);
-                NoticeParse("链接已失效或网络故障。");
+                NoticeParse("链接已失效或网络故障");
                 NotifyIfHidden("自动解析失败", ex.Message);
             }
             finally
@@ -526,7 +526,7 @@ namespace GeZi
 
                 string hint = PanProviderRegistry.CredentialHint(shareRef.Kind);
                 Log(panName + "尚未配置登录凭证（需要：" + hint + "）。");
-                NoticeNeedLogin("还没有登录" + panName + "，已为你切到登录页。");
+                NoticeNeedLogin("还没登录" + panName + "，已切到登录页");
                 provider.Dispose();
                 return;
             }
@@ -578,9 +578,9 @@ namespace GeZi
                 // 从收藏夹点进来的（收藏的是分享里的某个文件）→ 进目录后自动定位到那个文件
                 TryDrillToFavoriteTarget();
                 if (_files.Count == 0)
-                    NoticeParse("链接已失效或网络故障。");
+                    NoticeParse("链接已失效或网络故障");
                 else
-                    NoticeParse("解析成功，共 " + _files.Count + " 个文件。");
+                    NoticeParse("解析成功，共 " + _files.Count + " 个文件");
                 NotifyIfHidden("已解析 " + panName + " 分享",
                     _files.Count > 0
                         ? "共 " + _files.Count + " 个文件。双击托盘图标打开窗口即可下载。"
@@ -589,7 +589,7 @@ namespace GeZi
             catch (Exception ex)
             {
                 Log(panName + "解析失败: " + ex.Message);
-                NoticeParse("链接已失效或网络故障。");
+                NoticeParse("链接已失效或网络故障");
                 NotifyIfHidden(panName + "解析失败", ex.Message);
 
                 // 解析失败最常见的原因就是令牌过期（服务端 401 / token invalid）。

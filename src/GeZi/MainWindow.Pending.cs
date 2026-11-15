@@ -1403,7 +1403,7 @@ namespace GeZi
             //   会用到它，必须保证传进去的是**同 kind** 的实例（见该方法的实现）。
             if (client == null && !IsLoggedInAny)
             {
-                NoticeNeedLogin("续传需要先登录，进度记录都在，登录后继续即可。");
+                NoticeNeedLogin("续传需要先登录，进度记录都在，登录后继续即可");
                 return;
             }
 
@@ -1580,7 +1580,7 @@ namespace GeZi
                             if (client == null)
                             {
                                 Log("[" + p.Name + "] 这条是夸克分享，需要夸克登录态才能续传，已跳过。");
-                                NoticeNeedLogin("这条是夸克分享，需要夸克登录态才能续传。", false);
+                                NoticeNeedLogin("这条是夸克分享，需要夸克登录态才能续传", false);
                                 skipped.Add(p.Name ?? "?");
                                 continue;
                             }
@@ -1636,7 +1636,7 @@ namespace GeZi
                             {
                                 Log("[" + p.Name + "] 需要 " + PanUrlParser.DisplayNameOf(kind)
                                     + " 登录态才能续传，已跳过。");
-                                NoticeNeedLogin("需要 " + PanUrlParser.DisplayNameOf(kind) + " 登录态才能续传。", false);
+                                NoticeNeedLogin("需要 " + PanUrlParser.DisplayNameOf(kind) + " 登录态才能续传", false);
                                 skipped.Add(p.Name ?? "?");
                                 continue;
                             }
@@ -1771,7 +1771,7 @@ namespace GeZi
                     {
                         int n = skipped.Count;
                         NoticeNeedLogin(string.Format(
-                            "这 {0} 个任务需要登录对应网盘才能续传，记录和进度都在，登录后可再试一次。", n));
+                            "这 {0} 个任务需要登录对应网盘才能续传，记录和进度都在，登录后可再试一次", n));
                     }
                     return;
                 }

@@ -69,9 +69,21 @@ namespace GeZi.Core.Support
             if (msg.IndexOf("远程主机强迫关闭", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (msg.IndexOf("已意外停止", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (msg.IndexOf("OpenSSL", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (msg.IndexOf("SSL", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (msg.IndexOf("underlying connection was closed", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (msg.IndexOf("forcibly closed", StringComparison.OrdinalIgnoreCase) >= 0) return true;
             if (msg.IndexOf("unexpectedly", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+
+            // 🚨🚨 2026-11-15 修：.NET Framework 的中文版消息是「从传输流收到意外的 EOF」，
+            // 英文原版才是 "unexpectedly"。上面那条英文判据对中文用户**永远不成立**，
+            // 结果就是这种网络断开被套上「写盘失败：」的前缀，还会因为落进兜底 catch
+            // 而直接判死任务、丢掉续传点（用户实测：16.33GB 下到 91.1% 报「写盘失败」）。
+            // 所以中文变体必须一起认，否则用户看到的是完全错误的归因。
+            if (msg.IndexOf("意外的 EOF", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (msg.IndexOf("传输流", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (msg.IndexOf("收到意外", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (msg.IndexOf("意外结束", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            if (msg.IndexOf("意外的结束", StringComparison.OrdinalIgnoreCase) >= 0) return true;
 
             return false;
         }

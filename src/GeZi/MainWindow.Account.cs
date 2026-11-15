@@ -631,7 +631,7 @@ namespace GeZi
             if (IsLoginPending)
             {
                 // 正在恢复：轻提示「稍候」，不切登录页（不是登录失败）。
-                NoticeNeedLogin("登录态正在恢复中，请稍等几秒再试（不用重新登录）。", false);
+                NoticeNeedLogin("登录态正在恢复中，请稍等几秒再试（不用重新登录）", false);
                 Log("登录态正在恢复，已跳过本次「" + action + "」。稍等几秒再试即可。");
                 return false;
             }
@@ -1322,7 +1322,7 @@ namespace GeZi
         {
             if (!IsLoggedInAny)
             {
-                NoticeNeedLogin("导出凭证需要先登录，已为你切到登录页。");
+                NoticeNeedLogin("导出凭证需要先登录，已切到登录页");
                 return;
             }
             try
