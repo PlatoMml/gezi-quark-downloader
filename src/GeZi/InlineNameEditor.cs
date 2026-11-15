@@ -91,8 +91,11 @@ namespace GeZi
                 Text = displayText ?? "",
                 Style = Application.Current.TryFindResource(styleKey) as Style,
                 VerticalAlignment = VerticalAlignment.Center,
-                // 光标变成 I 字形：提示「这里可以改」。
-                Cursor = Cursors.IBeam,
+                // ⚠️ 2026-11-15 用户原话：「我不需要点击名字后可以修改，
+                //    我只要右键选择重命名后才可以修改。」
+                //    ⇒ 名字平时就是**普通文字**：鼠标停在上面是普通箭头，
+                //    点它 = 点整行 = 重新打开这条分享（原来的行为，别改）。
+                //    所以这里**不设** IBeam 光标，也**不**监听点击进编辑。
             };
 
             _box = new TextBox
@@ -155,6 +158,15 @@ namespace GeZi
             _editing = true;
             _editingCount++;
             _box.Text = _origin;
+
+            // ⚠️ 2026-11-15 用户原话：「光标的位置不对啊，默认光标不应该在最右边吗」
+            //    ⇒ 光标竖杠默认落在文字**最末尾**；旧文字全选，直接打字就是覆盖
+            //    （Windows 资源管理器就地重命名的同一个习惯）。
+            //    这里在还没拿到焦点时就把选区钉好：TextBox 失去焦点时选区会被清，
+            //    等拿到焦点再选，容易被右键菜单收尾抢焦点那一拍冲掉。
+            _box.CaretIndex = _box.Text.Length;
+            _box.Select(0, _box.Text.Length);
+
             _label.Visibility = Visibility.Collapsed;
             _box.Visibility = Visibility.Visible;
 
@@ -173,7 +185,9 @@ namespace GeZi
                 {
                     if (!_editing) return;
                     _box.Focus();
-                    _box.SelectAll();
+                    // 焦点可能被菜单收尾抢走过，这里再钉一次（光标始终在最右）。
+                    _box.CaretIndex = _box.Text.Length;
+                    _box.Select(0, _box.Text.Length);
                 }
                 catch { }
             }));
@@ -183,46 +197,22 @@ namespace GeZi
 
         private void Wire()
         {
-            // 点名字文字 ⇒ 进入编辑态。
-            // ⚠️ 必须吃掉这次点击：整行是一个 Button（点整行 = 重新解析这个分享），
-            //    不吃掉的话同一次点击既进编辑态、又触发行点击（面板会被当场关掉）。
-            _label.PreviewMouseLeftButtonDown += (s, e) =>
-            {
-                e.Handled = true;
-                BeginEdit();
-            };
+            // ⚠️ 2026-11-15 用户原话：「我不需要点击名字后可以修改，
+            //    我只要右键选择重命名后才可以修改。」
+            //    ⇒ 名字平时是**普通文字**，**不监听点击**。
+            //    点它 = 点整行 = 重新打开这条分享（原来的行为，别改）。
+            //    所以这里刻意**没有** _label.PreviewMouseLeftButtonDown 处理器。
 
-            // 点输入框 ⇒ 自己处理。
-            // ⚠️ 也要吃掉：外层 Button 靠 MouseDown/MouseUp 判断「刚才按下了」，
-            //    冒泡上来会抛出 Click ⇒ 整行被当成「重新打开这个分享」⇒ 面板当场关掉。
-            //    按下、抬起都吃掉，Button 就不会认为「被按过」。
-            _box.PreviewMouseLeftButtonDown += (s, e) =>
-            {
-                e.Handled = true;
-                _box.Focus();
-                try
-                {
-                    // 自己摆光标（默认的光标定位逻辑已被 Handled 掐掉）。
-                    // ⚠️ net48 的 TextBox.GetCharacterIndexFromPoint(Point, bool) 要两个参数
-                    //    （第二个 = 是否吸附到最近的字符边界）。
-                    Point p = e.GetPosition(_box);
-                    int idx = _box.GetCharacterIndexFromPoint(p, true);
-                    if (idx >= 0 && idx <= _box.Text.Length)
-                    {
-                        _box.CaretIndex = idx;
-                        _box.Select(idx, 0);
-                    }
-                    else
-                    {
-                        _box.SelectAll();
-                    }
-                }
-                catch { _box.SelectAll(); }
-            };
-            _box.PreviewMouseLeftButtonUp += (s, e) =>
-            {
-                e.Handled = true;
-            };
+            // ⚠️ 输入框的点击**完全不接管**，交给 WPF 原生处理。
+            //    原生 TextBox 会自己做两件事：
+            //      ① 把光标放到你点的那一个字前面（点哪光标就在哪）；
+            //      ② 按下时接管鼠标（拖选、选区）。
+            //    之前这里手写了 `GetCharacterIndexFromPoint` 自己算光标位置，
+            //    结果是「不管点哪光标都停在同一个地方」—— 那是自己算错的，
+            //    不是 WPF 的问题。原生处理才是对的。
+            //
+            //    外层那个「整行可点」的 Button 会不会误触发 Click？
+            //    不会：编辑期间它自己的点击处理器已经被摘掉了（见 AttachHostButton）。
 
             _box.KeyDown += (s, e) =>
             {
