@@ -701,7 +701,7 @@ namespace GeZi
         // 用户要求：不弹新窗口，在右侧内容区显示，和设置/登录一致。
         // 旧的 AboutWindow 弹窗已废弃，但它里面的「赞赏码 / 检查更新 / 链接」功能必须保留。
 
-        private const string AboutRepoUrl = "https://github.com/huaotem-bot/gezi-quark-downloader";
+        private const string AboutRepoUrl = "https://github.com/huaotem-bot/GeZi-downloader";
         private const string AboutBiliUrl = "https://b23.tv/gIoEfQM";
 
         /// <summary>把版本号填进关于页（页面加载时调用一次）。</summary>
